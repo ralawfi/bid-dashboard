@@ -167,7 +167,7 @@ const state = {
   view:'overview', theme:'light',
   data:[], loaded:false, source:'Loading baseline export…', message:'', hasSubCol:false,
   period:'ALL', qBasis:'created',
-  sell:'All', channel:'All', portfolio:'All', owner:'All', lines:[], stage:null, outcome:null, query:'',
+  sells:[], channels:[], portfolios:[], lines:[], stage:null, outcome:null, query:'',
   sortKey:'value', sortDir:'desc', page:1,
   bucket:'current', subQuery:'', subSortKey:'submitted', subSortDir:'asc', detailId:null
 };
@@ -181,10 +181,9 @@ function scoped(opts){
   const o = opts || {};
   return state.data.filter(d => {
     if (!o.ignorePeriod && !inPeriod(d, state.period)) return false;
-    if (!o.ignoreSell && state.sell !== 'All' && (state.sell === 'Sell Direct' ? !d.direct : d.direct)) return false;
-    if (!o.ignoreChannel && state.channel !== 'All' && d.channel !== state.channel) return false;
-    if (!o.ignorePortfolio && state.portfolio !== 'All' && d.portfolio !== state.portfolio) return false;
-    if (!o.ignoreOwner && state.owner !== 'All' && d.owner !== state.owner) return false;
+    if (!o.ignoreSell && state.sells.length && state.sells.indexOf(d.direct ? 'Sell Direct' : 'Sell Through') === -1) return false;
+    if (!o.ignoreChannel && state.channels.length && state.channels.indexOf(d.channel) === -1) return false;
+    if (!o.ignorePortfolio && state.portfolios.length && state.portfolios.indexOf(d.portfolio) === -1) return false;
     if (!o.ignoreLines && state.lines.length && state.lines.indexOf(d.line) === -1) return false;
     return true;
   });
@@ -226,7 +225,7 @@ function onFile(file){
       if (!res.data.length) throw new Error('no data rows found');
       setState({
         data: res.data, loaded:true, hasSubCol: res.hasSubCol, page:1, stage:null, outcome:null, lines:[],
-        sell:'All', channel:'All', portfolio:'All', owner:'All', query:'', detailId:null, period:'ALL', subQuery:'', bucket:'current',
+        sells:[], channels:[], portfolios:[], query:'', detailId:null, period:'ALL', subQuery:'', bucket:'current',
         source: file.name + ' · ' + res.data.length + ' opportunities',
         message: 'Loaded ' + res.data.length + ' opportunities from ' + file.name + '. Filters reset to all.'
           + (res.unmapped.length ? ' Stage values outside the agreed mapping: ' + res.unmapped.join(', ') + '.' : '')
@@ -239,7 +238,7 @@ function onFile(file){
   reader.readAsText(file);
 }
 function resetData(){
-  setState({ message:'', stage:null, outcome:null, lines:[], sell:'All', channel:'All', portfolio:'All', owner:'All', query:'', period:'ALL', page:1, detailId:null, bucket:'current', subQuery:'' });
+  setState({ message:'', stage:null, outcome:null, lines:[], sells:[], channels:[], portfolios:[], query:'', period:'ALL', page:1, detailId:null, bucket:'current', subQuery:'' });
   loadBaseline();
 }
 function loadBaseline(){
@@ -270,6 +269,27 @@ function h(tag, attrs, ...kids){
 }
 const dot = (color, size) => h('span', { style:{ width:(size||8)+'px', height:(size||8)+'px', background:color, display:'inline-block', flex:'none' } });
 const seg = active => active ? { background:P.purple, color:'#FFFFFF' } : { background:'transparent', color: dark() ? '#FFFFFF' : P.onyx };
+
+/* Toggle-tab group with an "All" pill: options is an array of labels; arr is the current
+   multi-select array from state; onToggle(nextArr) applies the change. Clicking "All" clears
+   the array; clicking an option toggles it in/out (and implicitly deselects "All"). */
+function multiTabs(options, arr, onToggle){
+  const items = ['All'].concat(options);
+  return h('div', { style:{ display:'flex', border:'1px solid var(--line)', flexWrap:'wrap' } }, items.map(label => {
+    const isAll = label === 'All';
+    const on = isAll ? arr.length === 0 : arr.indexOf(label) > -1;
+    return h('div', { class:'clickable',
+      onclick: () => onToggle(isAll ? [] : (arr.indexOf(label) > -1 ? arr.filter(x => x !== label) : arr.concat([label]))),
+      style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(on)) }, label);
+  }));
+}
+/* Chip group for a multi-select dimension with per-value counts, matching the Service line chips. */
+function multiChips(keys, agg, arr, onToggle, d){
+  return h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap' } }, keys.map(k => { const on = arr.indexOf(k) > -1;
+    return h('div', { class:'clickable', onclick: () => onToggle(on ? arr.filter(x => x !== k) : arr.concat([k])),
+      style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', fontSize:'13px', border:'1px solid '+(on?P.purple:'var(--line)'), background: on ? (d?'rgba(79,0,140,.45)':'#F3ECF8') : 'transparent', color: on ? (d?'#FFFFFF':P.purple) : 'var(--ink)' } },
+      k + ' (' + agg[k] + ')'); }));
+}
 
 /* ---------------- view model + paint ---------------- */
 function render(){
@@ -363,24 +383,13 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   ));
   filterCard.appendChild(h('div', { style:{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:'16px 24px' } },
     h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Sell type'),
-      h('div', { style:{ display:'flex', border:'1px solid var(--line)', flexWrap:'wrap' } }, SELL_TABS.map(label => h('div', { class:'clickable', onclick:() => set({ sell:label }),
-        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.sell===label)) }, label)))),
+      multiTabs(SELL_TABS.filter(x=>x!=='All'), s.sells, arr => set({ sells:arr }))),
     h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Channel'),
-      h('div', { style:{ display:'flex', border:'1px solid var(--line)' } }, ['All','Etimad','Non Etimad'].map(label => h('div', { class:'clickable', onclick:() => set({ channel:label }),
-        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.channel===label)) }, label)))),
+      multiTabs(['Etimad','Non Etimad'], s.channels, arr => set({ channels:arr }))),
     (() => { const pfScope = scoped({ ignorePortfolio:true }); const agg = {}; pfScope.forEach(o => agg[o.portfolio] = (agg[o.portfolio]||0)+1);
       const keys = Object.keys(agg).sort();
-      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Portfolio'),
-        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ portfolio:e.target.value }) },
-          h('option', { value:'All', selected: s.portfolio==='All' }, 'All portfolios (' + pfScope.length + ')'),
-          keys.map(k => h('option', { value:k, selected: s.portfolio===k }, k + ' (' + agg[k] + ')'))));
-    })(),
-    (() => { const ownScope = scoped({ ignoreOwner:true }); const agg = {}; ownScope.forEach(o => agg[o.owner] = (agg[o.owner]||0)+1);
-      const keys = Object.keys(agg).sort();
-      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Owner'),
-        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ owner:e.target.value }) },
-          h('option', { value:'All', selected: s.owner==='All' }, 'All owners (' + ownScope.length + ')'),
-          keys.map(k => h('option', { value:k, selected: s.owner===k }, k + ' (' + agg[k] + ')'))));
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Portfolio'),
+        multiChips(keys, agg, s.portfolios, arr => set({ portfolios:arr }), d));
     })()
   ));
   { const lineScope = scoped({ ignoreLines:true }); const agg = {}; lineScope.forEach(o => agg[o.line] = (agg[o.line]||0)+1);
@@ -400,17 +409,16 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   const activeChips = [];
   if (s.stage) activeChips.push({ label:'Reached: '+s.stage, clear:() => set({ stage:null }) });
   if (s.outcome) activeChips.push({ label:'Outcome: '+s.outcome, clear:() => set({ outcome:null }) });
-  if (s.sell!=='All') activeChips.push({ label:s.sell, clear:() => set({ sell:'All' }) });
-  if (s.channel!=='All') activeChips.push({ label:s.channel, clear:() => set({ channel:'All' }) });
-  if (s.portfolio!=='All') activeChips.push({ label:s.portfolio, clear:() => set({ portfolio:'All' }) });
-  if (s.owner!=='All') activeChips.push({ label:s.owner, clear:() => set({ owner:'All' }) });
+  if (s.sells.length) activeChips.push({ label:s.sells.join(', '), clear:() => set({ sells:[] }) });
+  if (s.channels.length) activeChips.push({ label:s.channels.join(', '), clear:() => set({ channels:[] }) });
+  if (s.portfolios.length) activeChips.push({ label:s.portfolios.join(', '), clear:() => set({ portfolios:[] }) });
   if (s.lines.length) activeChips.push({ label:s.lines.join(', '), clear:() => set({ lines:[] }) });
   if (s.query.trim()) activeChips.push({ label:'Search: '+s.query.trim(), clear:() => set({ query:'' }) });
   content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', padding:'12px 20px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'12px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
     h('div', {}, scope.length + ' bids in scope · ' + sar(sum(scope)) + ' total contract value · ' + fmtDate(pr.from) + ' to ' + fmtDate(pr.to) + ' by ' + (s.qBasis==='close'?'close date':'created date')),
     h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginLeft:'auto', alignItems:'center' } },
       activeChips.map(a => h('div', { class:'clickable', onclick:a.clear, style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', background:P.purple, color:'#FFFFFF', fontSize:'12px' } }, a.label, h('span', { style:{ color:'#FF375E' } }, '\u2715'))),
-      activeChips.length ? h('div', { class:'btn', onclick:() => set({ stage:null, outcome:null, lines:[], sell:'All', channel:'All', portfolio:'All', owner:'All', query:'' }), style:{ padding:'6px 10px' } }, 'Clear all') : null
+      activeChips.length ? h('div', { class:'btn', onclick:() => set({ stage:null, outcome:null, lines:[], sells:[], channels:[], portfolios:[], query:'' }), style:{ padding:'6px 10px' } }, 'Clear all') : null
     )
   ));
 
@@ -467,15 +475,15 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
     cardTitle('Sell direct vs. sell through','Click to filter'),
     h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'16px' } }, 'Share of contract value by route to market.'),
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:'4px', marginBottom:'20px' } },
-      sellGroups.map((g,i) => { const on = s.sell===g.key, act = on || (s.sell==='All'&&i===0);
-        return h('div', { class:'clickable', onclick:() => set({ sell: on?'All':g.key }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'18px', border:'1px solid '+(act?P.purple:'var(--line)') } },
+      sellGroups.map((g) => { const on = s.sells.indexOf(g.key)>-1, act = on || s.sells.length===0;
+        return h('div', { class:'clickable', onclick:() => set({ sells: on ? s.sells.filter(x=>x!==g.key) : s.sells.concat([g.key]) }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'18px', border:'1px solid '+(act?P.purple:'var(--line)') } },
           h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82, marginBottom:'10px' } }, g.label),
           h('div', { style:{ fontSize:'36px', fontWeight:'300', lineHeight:'1', marginBottom:'8px' } }, pct(sum(g.list),sellValue).toFixed(0)+'%'),
           h('div', { style:{ fontSize:'12px', opacity:.72 } }, g.list.length+' bids \u00b7 '+sar(sum(g.list))),
           h('div', { style:{ fontSize:'12px', opacity:.72, marginTop:'4px' } }, rate(g.list.filter(o=>o.status==='Won').length, g.list.filter(o=>o.status==='Lost').length)+' win rate')); })),
     h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } },
-      Object.keys(sellVariants).sort((a,b)=>sellVariants[b].v-sellVariants[a].v).map(k => { const a = sellVariants[k]; const key = a.direct?'Sell Direct':'Sell Through'; const op = (s.sell==='All'||s.sell===key)?1:0.4;
-        return h('div', { class:'clickable', onclick:() => set({ sell: s.sell===key?'All':key }), style:{ opacity:op } },
+      Object.keys(sellVariants).sort((a,b)=>sellVariants[b].v-sellVariants[a].v).map(k => { const a = sellVariants[k]; const key = a.direct?'Sell Direct':'Sell Through'; const on = s.sells.indexOf(key)>-1; const op = (s.sells.length===0||on)?1:0.4;
+        return h('div', { class:'clickable', onclick:() => set({ sells: on ? s.sells.filter(x=>x!==key) : s.sells.concat([key]) }), style:{ opacity:op } },
           h('div', { style:{ display:'flex', justifyContent:'space-between', gap:'12px', fontSize:'13px', marginBottom:'6px' } }, h('span',{},k), h('span',{style:{color:'var(--ink2)',whiteSpace:'nowrap'}}, a.n+' bids \u00b7 '+sar(a.v)+' \u00b7 '+rate(a.w,a.l))),
           h('div', { style:{ height:'7px', background:'var(--track)' } }, h('div',{ style:{ height:'7px', width:pct(a.v,variantMax)+'%', background: a.direct?P.purple:P.moon } }))); }))
   );
@@ -507,8 +515,8 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   const channelCard = card(
     cardTitle('Etimad vs. non-Etimad','Click to filter'),
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:'4px', marginBottom:'18px' } },
-      ['Etimad','Non Etimad'].map((k,i) => { const list = chScope.filter(o=>o.channel===k); const on = s.channel===k, act = on || (s.channel==='All'&&i===0);
-        return h('div', { class:'clickable', onclick:() => set({ channel: on?'All':k }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'16px', border:'1px solid '+(act?P.purple:'var(--line)') } },
+      ['Etimad','Non Etimad'].map((k) => { const list = chScope.filter(o=>o.channel===k); const on = s.channels.indexOf(k)>-1, act = on || s.channels.length===0;
+        return h('div', { class:'clickable', onclick:() => set({ channels: on ? s.channels.filter(x=>x!==k) : s.channels.concat([k]) }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'16px', border:'1px solid '+(act?P.purple:'var(--line)') } },
           h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82, marginBottom:'8px' } }, k==='Etimad'?'Etimad tenders':'Non-Etimad'),
           h('div', { style:{ fontSize:'30px', fontWeight:'300', marginBottom:'6px' } }, pct(list.length, classified||1).toFixed(0)+'%'),
           h('div', { style:{ fontSize:'12px', opacity:.72 } }, list.length+' bids \u00b7 '+sar(sum(list))),
@@ -525,8 +533,8 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   const pfMax = Math.max(1, ...pfKeys.map(k=>pfAgg[k].v));
   const portfolioCard = card(
     cardTitle('Business portfolio','Click to filter'),
-    h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } }, pfKeys.map(k => { const a = pfAgg[k]; const on = s.portfolio===k; const op = (s.portfolio==='All'||on)?1:0.4;
-      return h('div', { class:'clickable', onclick:() => set({ portfolio: on?'All':k }), style:{ opacity:op } },
+    h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } }, pfKeys.map(k => { const a = pfAgg[k]; const on = s.portfolios.indexOf(k)>-1; const op = (s.portfolios.length===0||on)?1:0.4;
+      return h('div', { class:'clickable', onclick:() => set({ portfolios: on ? s.portfolios.filter(x=>x!==k) : s.portfolios.concat([k]) }), style:{ opacity:op } },
         h('div', { style:{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'6px' } }, h('span',{},k), h('span',{style:{color:'var(--ink2)',whiteSpace:'nowrap'}}, a.n+' bids \u00b7 '+sar(a.v)+' \u00b7 '+rate(a.w,a.l))),
         h('div', { style:{ height:'7px', background:'var(--track)' } }, h('div',{ style:{ height:'7px', width:pct(a.v,pfMax)+'%', background: on?P.coral:P.purple } }))); }))
   );
@@ -585,21 +593,11 @@ function paintSubmissions(content, s, d){
   const lbl = t => h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, t);
   content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'16px 20px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'16px 24px' } },
     h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Channel'),
-      h('div', { style:{ display:'flex', border:'1px solid var(--line)' } }, ['All','Etimad','Non Etimad'].map(label => h('div', { class:'clickable', onclick:() => set({ channel:label }),
-        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.channel===label)) }, label)))),
-    (() => { const ownScope = scoped({ ignoreOwner:true, ignorePeriod:true }); const agg = {}; ownScope.forEach(o => agg[o.owner] = (agg[o.owner]||0)+1);
-      const keys = Object.keys(agg).sort();
-      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Owner'),
-        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ owner:e.target.value }) },
-          h('option', { value:'All', selected: s.owner==='All' }, 'All owners (' + ownScope.length + ')'),
-          keys.map(k => h('option', { value:k, selected: s.owner===k }, k + ' (' + agg[k] + ')'))));
-    })(),
+      multiTabs(['Etimad','Non Etimad'], s.channels, arr => set({ channels:arr }))),
     (() => { const pfScope = scoped({ ignorePortfolio:true, ignorePeriod:true }); const agg = {}; pfScope.forEach(o => agg[o.portfolio] = (agg[o.portfolio]||0)+1);
       const keys = Object.keys(agg).sort();
-      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Portfolio'),
-        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ portfolio:e.target.value }) },
-          h('option', { value:'All', selected: s.portfolio==='All' }, 'All portfolios (' + pfScope.length + ')'),
-          keys.map(k => h('option', { value:k, selected: s.portfolio===k }, k + ' (' + agg[k] + ')'))));
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } }, lbl('Portfolio'),
+        multiChips(keys, agg, s.portfolios, arr => set({ portfolios:arr }), d));
     })(),
     (() => { const lineScope = scoped({ ignoreLines:true, ignorePeriod:true }); const agg = {}; lineScope.forEach(o => agg[o.line] = (agg[o.line]||0)+1);
       const keys = Object.keys(agg).sort((a,b) => agg[b]-agg[a]);
