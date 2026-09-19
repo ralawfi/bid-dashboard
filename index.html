@@ -481,6 +481,26 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   );
   content.appendChild(h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))', gap:'20px', marginBottom:'20px' } }, funnelCard, sellCard));
 
+  /* split by service line */
+  { const lsScope = scoped({ ignoreLines:true }); const agg = {};
+    lsScope.forEach(o => { const a = agg[o.line] = agg[o.line]||{n:0,v:0,w:0,l:0}; a.n++; a.v+=o.value; if(o.status==='Won')a.w++; if(o.status==='Lost')a.l++; });
+    const lineTotal = lsScope.length || 1;
+    const lineRows = Object.keys(agg).sort((a,b)=>agg[b].n-agg[a].n).map(k => { const a = agg[k]; const on = s.lines.indexOf(k)>-1;
+      return { key:k, color: lineColor(k), count:a.n, value: sar(a.v), win: rate(a.w,a.l), pct: Math.max(1,pct(a.n,lineTotal)), op: (s.lines.length===0||on)?1:0.35 }; });
+    const toggleLine = k => set({ lines: s.lines.indexOf(k)>-1 ? s.lines.filter(x=>x!==k) : s.lines.concat([k]) });
+    content.appendChild(card(
+      cardTitle('Split by service line', 'Click to filter \u00b7 count, contract value, win rate'),
+      h('div', { style:{ display:'flex', height:'22px', marginBottom:'24px' } }, lineRows.map(l => h('div', { class:'clickable', onclick:()=>toggleLine(l.key), style:{ width:l.pct+'%', background:l.color, opacity:l.op } }))),
+      h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } }, lineRows.map(l => h('div', { class:'clickable', onclick:()=>toggleLine(l.key), style:{ display:'flex', alignItems:'center', gap:'10px', paddingBottom:'9px', borderBottom:'1px solid var(--line)', opacity:l.op } },
+        h('div', { style:{ width:'10px', height:'10px', background:l.color, flex:'none' } }),
+        h('div', { style:{ fontSize:'13px', minWidth:'0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, l.key),
+        h('div', { style:{ marginLeft:'auto', fontSize:'13px', color:'var(--ink2)', whiteSpace:'nowrap' } }, String(l.count)),
+        h('div', { style:{ fontSize:'13px', width:'92px', textAlign:'right', whiteSpace:'nowrap' } }, l.value),
+        h('div', { style:{ fontSize:'13px', width:'62px', textAlign:'right', color:'var(--ink2)', whiteSpace:'nowrap' } }, l.win)
+      )))
+    ));
+  }
+
   /* channel + portfolio */
   const chScope = scoped({ ignoreChannel:true });
   const classified = chScope.filter(o=>o.channel==='Etimad').length + chScope.filter(o=>o.channel==='Non Etimad').length;
@@ -553,6 +573,8 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
     )
   );
   content.appendChild(tableCard);
+  content.appendChild(h('div', { style:{ marginTop:'20px', fontSize:'12px', color:'var(--ink2)', lineHeight:'1.7' } },
+    'Reads CRM exports with Opportunity Owner, Account Name, Opportunity Name, Stage, Close Date, Created Date, Business Portfolio, Opportunity Type, Type, Business Type, Etimad Type, Opportunity Number and Total Contract Value (TCV). Stage prefixes 1\u20137 set the pipeline order; dates are read day-first. All periods cover 1 January to 31 December 2026 on the selected date basis.'));
 }
 
 function paintSubmissions(content, s, d){
@@ -560,7 +582,35 @@ function paintSubmissions(content, s, d){
   const subScope = scoped({ ignorePeriod:true });
   const inWin = (o,win) => !!o.submitted && o.submitted>=win.from && o.submitted<=win.to;
   const sum = a => a.reduce((x,o)=>x+o.value,0);
-  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', padding:'12px 20px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
+  const lbl = t => h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, t);
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'16px 20px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'16px 24px' } },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Channel'),
+      h('div', { style:{ display:'flex', border:'1px solid var(--line)' } }, ['All','Etimad','Non Etimad'].map(label => h('div', { class:'clickable', onclick:() => set({ channel:label }),
+        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.channel===label)) }, label)))),
+    (() => { const ownScope = scoped({ ignoreOwner:true, ignorePeriod:true }); const agg = {}; ownScope.forEach(o => agg[o.owner] = (agg[o.owner]||0)+1);
+      const keys = Object.keys(agg).sort();
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Owner'),
+        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ owner:e.target.value }) },
+          h('option', { value:'All', selected: s.owner==='All' }, 'All owners (' + ownScope.length + ')'),
+          keys.map(k => h('option', { value:k, selected: s.owner===k }, k + ' (' + agg[k] + ')'))));
+    })(),
+    (() => { const pfScope = scoped({ ignorePortfolio:true, ignorePeriod:true }); const agg = {}; pfScope.forEach(o => agg[o.portfolio] = (agg[o.portfolio]||0)+1);
+      const keys = Object.keys(agg).sort();
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, lbl('Portfolio'),
+        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ portfolio:e.target.value }) },
+          h('option', { value:'All', selected: s.portfolio==='All' }, 'All portfolios (' + pfScope.length + ')'),
+          keys.map(k => h('option', { value:k, selected: s.portfolio===k }, k + ' (' + agg[k] + ')'))));
+    })(),
+    (() => { const lineScope = scoped({ ignoreLines:true, ignorePeriod:true }); const agg = {}; lineScope.forEach(o => agg[o.line] = (agg[o.line]||0)+1);
+      const keys = Object.keys(agg).sort((a,b) => agg[b]-agg[a]);
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } }, lbl('Service line'),
+        h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap' } }, keys.map(k => { const on = s.lines.indexOf(k)>-1;
+          return h('div', { class:'clickable', onclick:() => set({ lines: on ? s.lines.filter(x=>x!==k) : s.lines.concat([k]) }),
+            style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', fontSize:'13px', border:'1px solid '+(on?P.purple:'var(--line)'), background: on ? (d?'rgba(79,0,140,.45)':'#F3ECF8') : 'transparent', color: on ? (d?'#FFFFFF':P.purple) : 'var(--ink)' } },
+            dot(lineColor(k)), k + ' (' + agg[k] + ')'); })));
+    })()
+  ));
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', borderTop:'0', background:'var(--panel2)', padding:'12px 20px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
     (s.hasSubCol?'Grouped by Customer Submission Date':'No Customer Submission Date column in this export — grouped by Close Date')+' \u00b7 weeks run Monday to Sunday \u00b7 today is '+fmtDate(w.today)));
 
   const bucketDefs = [
