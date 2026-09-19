@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upsource Bid Performance Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root[data-theme="light"]{ --bg:#FFFFFF; --panel:#FFFFFF; --panel2:#F6F7F8; --ink:#1D252D; --ink2:#8E9AA0; --line:#DDDFE2; --header:#4F008C; --track:#DDDFE2; --hover:#F6F7F8; }
+  :root[data-theme="dark"]{ --bg:#1D252D; --panel:#232D36; --panel2:#1A222A; --ink:#FFFFFF; --ink2:#8E9AA0; --line:#35414C; --header:#3A1066; --track:#35414C; --hover:#2A343E; }
+  * { box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:'Lucida Sans','Lucida Sans Unicode','Lucida Grande',Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+  a{ color:#4F008C; text-decoration:none; }
+  input, select, button{ font-family:inherit; }
+  button{ cursor:pointer; }
+  .btn{ padding:10px 16px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font-size:13px; display:flex; align-items:center; gap:8px; }
+  .btn:hover{ background:var(--hover); }
+  .rowhover:hover{ background:var(--hover); }
+  .clickable{ cursor:pointer; }
+  table{ border-collapse:collapse; width:100%; }
+  th, td{ padding:11px 12px; font-size:13px; text-align:left; white-space:nowrap; }
+  th{ font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink2); cursor:pointer; border-bottom:1px solid var(--line); border-top:1px solid var(--line); background:var(--panel2); }
+  th:hover{ color:#4F008C; }
+  tr.datarow{ border-bottom:1px solid var(--line); }
+  ::placeholder{ color:var(--ink2); }
+</style>
+</head>
+<body data-theme="light">
+<div id="root"></div>
+<script>
+(function(){
+'use strict';
+
+/* ---------------- design tokens & static data (ported from the source export) ---------------- */
+const P = { purple:'#4F008C', dark:'#3A1066', moon:'#A54EE1', coral:'#FF375E', onyx:'#1D252D', silver:'#8E9AA0', lsilver:'#DDDFE2', sun:'#FFDD40', sunset:'#FF6A39', oasis:'#00C48C', sea:'#1CCFD9' };
+const LINE_COLORS = { 'MPO':P.purple, 'CLM':P.moon, 'SCM':P.sea, 'Facility Management':P.oasis, 'HRO':P.sun, 'F&A':P.sunset, 'CX':P.dark, 'Event Management':P.dark };
+const lineColor = k => LINE_COLORS[k] || P.silver;
+const STAGE_ORDER = ['Identified', 'To be qualified', 'Qualified in progress', 'Submitted — under evaluation', 'Won — under evaluation', 'Won', 'Handover completed'];
+const STAGE_MAP = {
+  '1-identified':{ stage:'Identified', status:'Open', idx:0 },
+  '2-to be qualified':{ stage:'To be qualified', status:'Open', idx:1 },
+  '3-qualified in progress':{ stage:'Qualified in progress', status:'Open', idx:2 },
+  '4-submitted - under evaluation':{ stage:'Submitted — under evaluation', status:'Open', idx:3 },
+  '5-won - under evaluation':{ stage:'Won — under evaluation', status:'Won', idx:4 },
+  '6-won':{ stage:'Won', status:'Won', idx:5 },
+  '7-handover completed':{ stage:'Handover completed', status:'Won', idx:6 },
+  '6-lost':{ stage:'Lost', status:'Lost', idx:3 },
+  '6-cancelled':{ stage:'Cancelled', status:'Cancelled', idx:2 },
+  '6-dropped':{ stage:'Dropped', status:'Dropped', idx:2 }
+};
+const STAGE_STYLE = {
+  'Identified':{ l:['#F2F3F4','#4A555E','#E2E4E7'], d:['rgba(142,154,160,.18)','#D3D9DC','rgba(142,154,160,.4)'] },
+  'To be qualified':{ l:['#F2F3F4','#4A555E','#E2E4E7'], d:['rgba(142,154,160,.18)','#D3D9DC','rgba(142,154,160,.4)'] },
+  'Qualified in progress':{ l:['#F1E6F7','#3A1066','#E4D2EE'], d:['rgba(165,78,225,.18)','#D9B8F2','rgba(165,78,225,.4)'] },
+  'Submitted — under evaluation':{ l:['#EDE3F5','#4F008C','#DCC9EB'], d:['rgba(79,0,140,.45)','#E3CCF5','rgba(165,78,225,.5)'] },
+  'Won — under evaluation':{ l:['#E3F8FA','#0F7F86','#CBEFF3'], d:['rgba(28,207,217,.16)','#8FE7EC','rgba(28,207,217,.4)'] },
+  'Won':{ l:['#E2F8F1','#00734F','#C9EFE3'], d:['rgba(0,196,140,.16)','#83E8CB','rgba(0,196,140,.42)'] },
+  'Handover completed':{ l:['#E2F8F1','#00734F','#C9EFE3'], d:['rgba(0,196,140,.16)','#83E8CB','rgba(0,196,140,.42)'] },
+  'Lost':{ l:['#FFE9ED','#B01235','#F9D3DB'], d:['rgba(255,55,94,.16)','#FFA8BB','rgba(255,55,94,.42)'] },
+  'Cancelled':{ l:['#F2F3F4','#6B757C','#E2E4E7'], d:['rgba(142,154,160,.14)','#B9C2C7','rgba(142,154,160,.35)'] },
+  'Dropped':{ l:['#F2F3F4','#6B757C','#E2E4E7'], d:['rgba(142,154,160,.14)','#B9C2C7','rgba(142,154,160,.35)'] }
+};
+const DAY = 86400000;
+const YEAR = 2026;
+const PERIODS = [
+  { key:'ALL', label:'All 2026', from: YEAR + '-01-01', to: YEAR + '-12-31' },
+  { key:'YTD', label:'YTD', from: YEAR + '-01-01', to: null },
+  { key:'Q1', label:'Q1 2026', from: YEAR + '-01-01', to: YEAR + '-03-31' },
+  { key:'Q2', label:'Q2 2026', from: YEAR + '-04-01', to: YEAR + '-06-30' },
+  { key:'Q3', label:'Q3 2026', from: YEAR + '-07-01', to: YEAR + '-09-30' },
+  { key:'Q4', label:'Q4 2026', from: YEAR + '-10-01', to: YEAR + '-12-31' }
+];
+const iso = d => d.toISOString().slice(0, 10);
+const fmtDate = s => { if (!s) return '—'; const d = new Date(s + 'T00:00:00Z'); return isNaN(d) ? '—' : d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }); };
+const pct = (n, d) => d > 0 ? (n / d) * 100 : 0;
+const rate = (w, l) => (w + l) ? pct(w, w + l).toFixed(1) + '%' : '—';
+const short = v => !v ? '0' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'K' : String(Math.round(v));
+const sar = v => 'SAR ' + short(v);
+function todayIso() { const n = new Date(); return iso(new Date(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()))); }
+function mondayOf(isoDate) { const d = new Date(isoDate + 'T00:00:00Z'); const wd = (d.getUTCDay() + 6) % 7; return iso(new Date(d.getTime() - wd * DAY)); }
+function shift(isoDate, n) { return iso(new Date(new Date(isoDate + 'T00:00:00Z').getTime() + n * DAY)); }
+function parseDate(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) {
+    let a = +m[1], b = +m[2];
+    if (a > 12) return m[3] + '-' + String(b).padStart(2, '0') + '-' + String(a).padStart(2, '0');
+    if (b > 12) return m[3] + '-' + String(a).padStart(2, '0') + '-' + String(b).padStart(2, '0');
+    return m[3] + '-' + String(b).padStart(2, '0') + '-' + String(a).padStart(2, '0');
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : iso(d);
+}
+function parseCSV(text) {
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"' && text[i + 1] === '"') { field += '"'; i++; } else if (c === '"') q = false; else field += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(v => String(v).trim() !== ''));
+}
+function fromCSV(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) throw new Error('the file needs a header row and at least one data row');
+  const head = rows[0].map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+  if (head.indexOf('stage') === -1) throw new Error('no Stage column found');
+  const at = (r, ...names) => { for (const n of names) { const i = head.indexOf(n); if (i > -1) return String(r[i] || '').trim(); } return ''; };
+  const hasSubCol = head.indexOf('customersubmissiondate') > -1 || head.indexOf('submissiondate') > -1;
+  const unmapped = [];
+  const data = rows.slice(1).map((r, i) => {
+    const raw = at(r, 'stage');
+    const key = raw.toLowerCase().replace(/\s+/g, ' ').trim();
+    let mapped = STAGE_MAP[key];
+    if (!mapped) {
+      if (raw && unmapped.indexOf(raw) === -1) unmapped.push(raw);
+      const clean = raw.replace(/^\d+\s*-\s*/, '').trim() || 'Identified';
+      const low = clean.toLowerCase();
+      const status = /won|handover|award/.test(low) ? 'Won' : /lost/.test(low) ? 'Lost' : /cancel/.test(low) ? 'Cancelled' : /drop/.test(low) ? 'Dropped' : 'Open';
+      const num = parseInt(raw, 10);
+      mapped = { stage: clean, status, idx: isNaN(num) ? 0 : Math.max(0, Math.min(6, num - 1)) };
+    }
+    const etRaw = at(r, 'etimadtype');
+    const channel = /^\s*etimad/i.test(etRaw) ? 'Etimad' : etRaw ? 'Non Etimad' : 'Unspecified';
+    const sell = at(r, 'type', 'selltype') || 'Not recorded';
+    const value = (() => { const n = parseFloat(String(at(r, 'totalcontractvaluetcv', 'totalcontractvalue', 'tcv', 'amount', 'value')).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; })();
+    const created = parseDate(at(r, 'createddate'));
+    const closing = parseDate(at(r, 'closedate', 'estimatedclosingdate'));
+    const submitted = parseDate(at(r, 'customersubmissiondate', 'submissiondate')) || closing;
+    return {
+      id: 'r' + i,
+      num: at(r, 'opportunitynumber', 'number') || '—',
+      name: at(r, 'opportunityname', 'name') || 'Unnamed opportunity',
+      account: at(r, 'accountname', 'account', 'client') || 'Unknown account',
+      owner: at(r, 'opportunityowner', 'owner') || 'Unassigned',
+      sell, direct: /direct/i.test(sell),
+      reqType: at(r, 'opportunitytype') || '—',
+      channel,
+      line: at(r, 'businesstype', 'serviceline') || 'Not recorded',
+      portfolio: at(r, 'businessportfolio', 'portfolio') || 'Not recorded',
+      stage: mapped.stage, status: mapped.status, idx: mapped.idx, value,
+      created, closing, submitted
+    };
+  });
+  return { data, unmapped, hasSubCol };
+}
+const COLS = [
+  { key:'name', label:'Opportunity', align:'left' }, { key:'account', label:'Account', align:'left' },
+  { key:'line', label:'Service line', align:'left' }, { key:'sell', label:'Sell type', align:'left' },
+  { key:'stage', label:'Stage', align:'left' }, { key:'value', label:'TCV', align:'right' },
+  { key:'owner', label:'Owner', align:'left' }, { key:'created', label:'Created', align:'right' }, { key:'closing', label:'Close date', align:'right' }
+];
+const SUB_COLS = [
+  { key:'submitted', label:'Submission', align:'left' }, { key:'name', label:'Opportunity', align:'left' },
+  { key:'account', label:'Account', align:'left' }, { key:'line', label:'Service line', align:'left' },
+  { key:'stage', label:'Stage', align:'left' }, { key:'value', label:'TCV', align:'right' }, { key:'owner', label:'Owner', align:'left' }
+];
+const SELL_TABS = ['All', 'Sell Direct', 'Sell Through'];
+const pageSize = 12;
+
+/* ---------------- state store ---------------- */
+const state = {
+  view:'overview', theme:'light',
+  data:[], loaded:false, source:'Loading baseline export…', message:'', hasSubCol:false,
+  period:'ALL', qBasis:'created',
+  sell:'All', channel:'All', portfolio:'All', owner:'All', lines:[], stage:null, outcome:null, query:'',
+  sortKey:'value', sortDir:'desc', page:1,
+  bucket:'current', subQuery:'', subSortKey:'submitted', subSortDir:'asc', detailId:null
+};
+function setState(patch){ Object.assign(state, patch); render(); }
+function set(patch){ setState(Object.assign({ page:1 }, patch)); }
+const dark = () => state.theme === 'dark';
+const basisDate = o => state.qBasis === 'close' ? o.closing : o.created;
+const periodRange = key => { const p = PERIODS.filter(x => x.key === key)[0] || PERIODS[0]; return { from: p.from, to: p.to || todayIso() }; };
+const inPeriod = (o, key) => { const r = periodRange(key); const t = basisDate(o); return !!t && t >= r.from && t <= r.to; };
+function scoped(opts){
+  const o = opts || {};
+  return state.data.filter(d => {
+    if (!o.ignorePeriod && !inPeriod(d, state.period)) return false;
+    if (!o.ignoreSell && state.sell !== 'All' && (state.sell === 'Sell Direct' ? !d.direct : d.direct)) return false;
+    if (!o.ignoreChannel && state.channel !== 'All' && d.channel !== state.channel) return false;
+    if (!o.ignorePortfolio && state.portfolio !== 'All' && d.portfolio !== state.portfolio) return false;
+    if (!o.ignoreOwner && state.owner !== 'All' && d.owner !== state.owner) return false;
+    if (!o.ignoreLines && state.lines.length && state.lines.indexOf(d.line) === -1) return false;
+    return true;
+  });
+}
+function metrics(list){
+  const won = list.filter(o => o.status === 'Won'), lost = list.filter(o => o.status === 'Lost');
+  const open = list.filter(o => o.status === 'Open'), noBid = list.filter(o => o.status === 'Cancelled' || o.status === 'Dropped');
+  const sum = a => a.reduce((x, o) => x + o.value, 0);
+  const et = list.filter(o => o.channel === 'Etimad').length, nonEt = list.filter(o => o.channel === 'Non Etimad').length;
+  const valued = list.filter(o => o.value);
+  return {
+    total: list.length, winRate: pct(won.length, won.length + lost.length),
+    wonCount: won.length, lostCount: lost.length, wonValue: sum(won), pipeline: sum(open), openCount: open.length,
+    submitted: open.filter(o => o.idx >= 3).length, noBidRate: pct(noBid.length, list.length), noBidCount: noBid.length,
+    etimadShare: pct(et, et + nonEt), etimadCount: et, classified: et + nonEt,
+    avgDeal: valued.length ? sum(valued) / valued.length : 0, valuedCount: valued.length
+  };
+}
+function weekWindows(){
+  const today = todayIso(), mon = mondayOf(today);
+  return { today, last:{ from: shift(mon,-7), to: shift(mon,-1) }, current:{ from: mon, to: shift(mon,6) },
+    next:{ from: shift(mon,7), to: shift(mon,13) }, upcoming:{ from: shift(mon,7), to:'9999-12-31' } };
+}
+function loadText(t, label){
+  const res = fromCSV(t);
+  const data = res.data;
+  const noValue = data.filter(o => !o.value).length;
+  const notes = [];
+  if (noValue) notes.push(noValue + ' of ' + data.length + ' records have no contract value recorded — they count in bid volumes but not in value totals or average deal size.');
+  if (res.unmapped.length) notes.push('Stage value' + (res.unmapped.length > 1 ? 's' : '') + ' outside the agreed mapping, classified by keyword: ' + res.unmapped.join(', ') + '.');
+  if (!res.hasSubCol) notes.push('No Customer Submission Date column in this export — the submissions view groups weeks by close date instead.');
+  setState({ data, loaded:true, hasSubCol: res.hasSubCol, source: label + ' · ' + data.length + ' opportunities', message: notes.join(' '), page:1 });
+}
+function onFile(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const res = fromCSV(String(reader.result));
+      if (!res.data.length) throw new Error('no data rows found');
+      setState({
+        data: res.data, loaded:true, hasSubCol: res.hasSubCol, page:1, stage:null, outcome:null, lines:[],
+        sell:'All', channel:'All', portfolio:'All', owner:'All', query:'', detailId:null, period:'ALL', subQuery:'', bucket:'current',
+        source: file.name + ' · ' + res.data.length + ' opportunities',
+        message: 'Loaded ' + res.data.length + ' opportunities from ' + file.name + '. Filters reset to all.'
+          + (res.unmapped.length ? ' Stage values outside the agreed mapping: ' + res.unmapped.join(', ') + '.' : '')
+          + (res.hasSubCol ? ' Customer submission dates found — the submissions view uses them.' : ' No Customer Submission Date column — the submissions view groups weeks by close date.')
+      });
+    } catch (err) {
+      setState({ message: 'Could not read ' + file.name + ' — ' + err.message + '. Expected the CRM export columns: Opportunity Owner, Account Name, Opportunity Name, Stage, Close Date, Created Date, Business Portfolio, Opportunity Type, Type, Business Type, Etimad Type, Opportunity Number, Total Contract Value (TCV).' });
+    }
+  };
+  reader.readAsText(file);
+}
+function resetData(){
+  setState({ message:'', stage:null, outcome:null, lines:[], sell:'All', channel:'All', portfolio:'All', owner:'All', query:'', period:'ALL', page:1, detailId:null, bucket:'current', subQuery:'' });
+  loadBaseline();
+}
+function loadBaseline(){
+  fetch('data.csv').then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+    .then(t => loadText(t, 'Baseline export'))
+    .catch(() => setState({ loaded:true, source:'No data loaded', message:'No data.csv found next to this page. Use "Upload CRM export" to load a CSV, or add a data.csv file to the repo to preload one automatically.' }));
+}
+
+/* ---------------- tiny DOM builder ---------------- */
+function h(tag, attrs, ...kids){
+  const e = document.createElement(tag);
+  for (const k in (attrs||{})) {
+    const v = attrs[k];
+    if (v==null || v===false) continue;
+    if (k==='style' && typeof v==='object') Object.assign(e.style, v);
+    else if (k.startsWith('on') && typeof v==='function') e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k==='class') e.className = v;
+    else e.setAttribute(k, v);
+  }
+  const append = c => {
+    if (c==null || c===false) return;
+    if (Array.isArray(c)) return c.forEach(append);
+    if (typeof c==='string' || typeof c==='number') e.appendChild(document.createTextNode(String(c)));
+    else e.appendChild(c);
+  };
+  kids.forEach(append);
+  return e;
+}
+const dot = (color, size) => h('span', { style:{ width:(size||8)+'px', height:(size||8)+'px', background:color, display:'inline-block', flex:'none' } });
+const seg = active => active ? { background:P.purple, color:'#FFFFFF' } : { background:'transparent', color: dark() ? '#FFFFFF' : P.onyx };
+
+/* ---------------- view model + paint ---------------- */
+function render(){
+  const s = state, d = dark();
+  const scope = scoped();
+  const m = metrics(scope);
+  const sum = a => a.reduce((x,o) => x + o.value, 0);
+  const stageStyle = st => (STAGE_STYLE[st] || STAGE_STYLE['Identified'])[d ? 'd' : 'l'];
+
+  document.documentElement.setAttribute('data-theme', s.theme);
+  const root = document.getElementById('root');
+  root.innerHTML = '';
+
+  /* ---- header ---- */
+  const views = [{ key:'overview', label:'Pipeline overview' }, { key:'submissions', label:'Submissions by week' }];
+  const header = h('div', { style:{ background:'var(--header)', color:'#FFFFFF', padding:'14px 24px 0', display:'flex', flexWrap:'wrap', alignItems:'center', justifyContent:'space-between', gap:'16px 24px' } },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'28px', flexWrap:'wrap', paddingBottom:'14px' } },
+      h('div', { style:{ fontSize:'17px', letterSpacing:'.02em' } }, h('b', {}, 'Upsource'), ' by Solutions'),
+      h('div', { style:{ display:'flex', gap:'4px' } }, views.map(v => h('div', {
+          class:'clickable', onclick:() => setState({ view:v.key }),
+          style:{ padding:'10px 18px', fontSize:'13px', display:'flex', alignItems:'center', gap:'10px',
+            background: s.view===v.key ? 'var(--bg)' : 'transparent', color: s.view===v.key ? 'var(--ink)' : '#FFFFFF',
+            border:'1px solid ' + (s.view===v.key ? 'var(--bg)' : 'rgba(255,255,255,.35)') }
+        }, dot(s.view===v.key ? P.coral : 'rgba(255,255,255,.55)'), v.label)))
+    ),
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'20px', flexWrap:'wrap', paddingBottom:'14px' } },
+      h('div', { style:{ fontSize:'13px', color:'rgba(255,255,255,.72)', whiteSpace:'nowrap' } }, s.source),
+      h('div', { class:'clickable', onclick:() => setState({ theme: d ? 'light' : 'dark' }),
+          style:{ display:'flex', border:'1px solid rgba(255,255,255,.35)', fontSize:'12px', letterSpacing:'.06em', textTransform:'uppercase' } },
+        h('div', { style:{ padding:'7px 12px', background: d ? 'transparent' : '#FFFFFF', color: d ? 'rgba(255,255,255,.72)' : P.purple } }, 'Light'),
+        h('div', { style:{ padding:'7px 12px', background: d ? '#FFFFFF' : 'transparent', color: d ? P.dark : 'rgba(255,255,255,.72)' } }, 'Dark')
+      )
+    )
+  );
+  root.appendChild(header);
+
+  const content = h('div', { style:{ padding:'28px clamp(16px,4vw,40px) 48px' } });
+  root.appendChild(content);
+
+  /* ---- title row ---- */
+  const fileInput = h('input', { type:'file', accept:'.csv,text/csv', style:{ display:'none' },
+    onchange:e => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); e.target.value=''; } });
+  content.appendChild(h('div', { style:{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'24px', flexWrap:'wrap', marginBottom:'24px' } },
+    h('div', {},
+      h('div', { style:{ fontSize:'12px', letterSpacing:'.14em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'8px' } }, 'Commercial & Bid Management'),
+      h('div', { style:{ fontSize:'30px', fontWeight:'300', letterSpacing:'-.01em' } }, s.view==='overview' ? 'Opportunity & Bid Performance' : 'Submissions by week')
+    ),
+    h('div', { style:{ display:'flex', gap:'12px', flexWrap:'wrap' } },
+      fileInput,
+      h('div', { class:'btn', onclick:() => fileInput.click() }, dot(P.coral), 'Upload CRM export'),
+      h('div', { class:'btn', onclick:resetData, style:{ color:'var(--ink2)' } }, 'Reload baseline')
+    )
+  ));
+
+  if (s.message) content.appendChild(h('div', { style:{ border:'1px solid var(--line)', borderLeft:'4px solid #FF375E', background:'var(--panel)', padding:'14px 20px', fontSize:'13px', marginBottom:'20px', lineHeight:'1.6' } }, s.message));
+
+  if (!s.loaded) { content.appendChild(h('div', { style:{ padding:'40px', textAlign:'center', color:'var(--ink2)' } }, 'Loading…')); return; }
+
+  if (s.view === 'overview') paintOverview(content, s, d, scope, m, sum, stageStyle);
+  else paintSubmissions(content, s, d);
+
+  paintDetail(root, s, d, stageStyle);
+}
+
+function kpiCard(label, value, sub, style){
+  return h('div', { style: Object.assign({ padding:'20px 20px 18px', display:'flex', flexDirection:'column', gap:'12px', minHeight:'120px', border:'1px solid' }, style) },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } }, dot(style.mark), h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82 } }, label)),
+    h('div', { style:{ fontSize:'30px', fontWeight:'300', letterSpacing:'-.015em', lineHeight:'1' } }, value),
+    h('div', { style:{ marginTop:'auto', fontSize:'12px', opacity:.68 } }, sub)
+  );
+}
+function card(...kids){ return h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'22px' } }, ...kids); }
+function cardTitle(t, hint){ return h('div', { style:{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:'16px', marginBottom:'16px' } }, h('div', { style:{ fontSize:'16px' } }, t), hint ? h('div', { style:{ fontSize:'12px', color:'var(--ink2)' } }, hint) : null); }
+
+function paintOverview(content, s, d, scope, m, sum, stageStyle){
+  /* filters */
+  const filterCard = h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'16px 20px', display:'flex', flexDirection:'column', gap:'16px', marginBottom:'20px' } });
+  filterCard.appendChild(h('div', { style:{ display:'flex', alignItems:'flex-start', gap:'16px', flexWrap:'wrap' } },
+    h('div', { style:{ minWidth:'110px' } },
+      h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Period'),
+      h('div', { style:{ display:'flex', border:'1px solid var(--line)', marginTop:'8px', width:'max-content' } },
+        [{k:'created',l:'Created date'},{k:'close',l:'Close date'}].map(b => h('div', { class:'clickable', onclick:() => set({ qBasis:b.k }),
+          style: Object.assign({ padding:'6px 10px', fontSize:'12px', borderLeft:'1px solid var(--line)' }, seg(s.qBasis===b.k)) }, b.l)))
+    ),
+    h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', flex:'1 1 320px' } },
+      PERIODS.map(p => { const on = s.period===p.key; const cnt = s.data.filter(o => inPeriod(o,p.key)).length;
+        return h('div', { class:'clickable', onclick:() => set({ period:p.key }),
+          style:{ padding:'7px 12px', fontSize:'13px', border:'1px solid ' + (on?P.purple:'var(--line)'), background: on?P.purple:'transparent', color: on?'#FFFFFF':'var(--ink)', display:'flex', gap:'8px' } },
+          p.label, h('span', { style:{ opacity:.6, fontSize:'12px' } }, String(cnt))); })
+    )
+  ));
+  filterCard.appendChild(h('div', { style:{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:'16px 24px' } },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Sell type'),
+      h('div', { style:{ display:'flex', border:'1px solid var(--line)', flexWrap:'wrap' } }, SELL_TABS.map(label => h('div', { class:'clickable', onclick:() => set({ sell:label }),
+        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.sell===label)) }, label)))),
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Channel'),
+      h('div', { style:{ display:'flex', border:'1px solid var(--line)' } }, ['All','Etimad','Non Etimad'].map(label => h('div', { class:'clickable', onclick:() => set({ channel:label }),
+        style: Object.assign({ padding:'8px 14px', fontSize:'13px', borderLeft:'1px solid var(--line)' }, seg(s.channel===label)) }, label)))),
+    (() => { const pfScope = scoped({ ignorePortfolio:true }); const agg = {}; pfScope.forEach(o => agg[o.portfolio] = (agg[o.portfolio]||0)+1);
+      const keys = Object.keys(agg).sort();
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Portfolio'),
+        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ portfolio:e.target.value }) },
+          h('option', { value:'All', selected: s.portfolio==='All' }, 'All portfolios (' + pfScope.length + ')'),
+          keys.map(k => h('option', { value:k, selected: s.portfolio===k }, k + ' (' + agg[k] + ')'))));
+    })(),
+    (() => { const ownScope = scoped({ ignoreOwner:true }); const agg = {}; ownScope.forEach(o => agg[o.owner] = (agg[o.owner]||0)+1);
+      const keys = Object.keys(agg).sort();
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Owner'),
+        h('select', { style:{ padding:'8px 10px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px' }, onchange:e => set({ owner:e.target.value }) },
+          h('option', { value:'All', selected: s.owner==='All' }, 'All owners (' + ownScope.length + ')'),
+          keys.map(k => h('option', { value:k, selected: s.owner===k }, k + ' (' + agg[k] + ')'))));
+    })()
+  ));
+  { const lineScope = scoped({ ignoreLines:true }); const agg = {}; lineScope.forEach(o => agg[o.line] = (agg[o.line]||0)+1);
+    const keys = Object.keys(agg).sort((a,b) => agg[b]-agg[a]);
+    filterCard.appendChild(h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } },
+      h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Service line'),
+      h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap' } }, keys.map(k => { const on = s.lines.indexOf(k)>-1;
+        return h('div', { class:'clickable', onclick:() => set({ lines: on ? s.lines.filter(x=>x!==k) : s.lines.concat([k]) }),
+          style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', fontSize:'13px', border:'1px solid ' + (on?P.purple:'var(--line)'), background: on ? (d?'rgba(79,0,140,.45)':'#F3ECF8') : 'transparent', color: on ? (d?'#FFFFFF':P.purple) : 'var(--ink)' } },
+          dot(lineColor(k)), k + ' (' + agg[k] + ')'); }))
+    ));
+  }
+  content.appendChild(filterCard);
+
+  /* scope summary + active chips */
+  const pr = periodRange(s.period);
+  const activeChips = [];
+  if (s.stage) activeChips.push({ label:'Reached: '+s.stage, clear:() => set({ stage:null }) });
+  if (s.outcome) activeChips.push({ label:'Outcome: '+s.outcome, clear:() => set({ outcome:null }) });
+  if (s.sell!=='All') activeChips.push({ label:s.sell, clear:() => set({ sell:'All' }) });
+  if (s.channel!=='All') activeChips.push({ label:s.channel, clear:() => set({ channel:'All' }) });
+  if (s.portfolio!=='All') activeChips.push({ label:s.portfolio, clear:() => set({ portfolio:'All' }) });
+  if (s.owner!=='All') activeChips.push({ label:s.owner, clear:() => set({ owner:'All' }) });
+  if (s.lines.length) activeChips.push({ label:s.lines.join(', '), clear:() => set({ lines:[] }) });
+  if (s.query.trim()) activeChips.push({ label:'Search: '+s.query.trim(), clear:() => set({ query:'' }) });
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', padding:'12px 20px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'12px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
+    h('div', {}, scope.length + ' bids in scope · ' + sar(sum(scope)) + ' total contract value · ' + fmtDate(pr.from) + ' to ' + fmtDate(pr.to) + ' by ' + (s.qBasis==='close'?'close date':'created date')),
+    h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginLeft:'auto', alignItems:'center' } },
+      activeChips.map(a => h('div', { class:'clickable', onclick:a.clear, style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', background:P.purple, color:'#FFFFFF', fontSize:'12px' } }, a.label, h('span', { style:{ color:'#FF375E' } }, '\u2715'))),
+      activeChips.length ? h('div', { class:'btn', onclick:() => set({ stage:null, outcome:null, lines:[], sell:'All', channel:'All', portfolio:'All', owner:'All', query:'' }), style:{ padding:'6px 10px' } }, 'Clear all') : null
+    )
+  ));
+
+  /* kpis */
+  const solid = (bg, mark) => ({ background:bg, color:'#FFFFFF', borderColor:bg, mark });
+  const plain = mark => ({ background:'var(--panel)', color:'var(--ink)', borderColor:'var(--line)', mark });
+  const kpiDefs = [
+    ['Win rate', (m.wonCount+m.lostCount)?m.winRate.toFixed(1)+'%':'—', (m.wonCount+m.lostCount)+' decided bids · cancelled and open excluded', solid(P.purple,P.coral)],
+    ['Pipeline value', short(m.pipeline), 'SAR · '+m.openCount+' open bids', solid(P.dark,P.coral)],
+    ['Bids in scope', String(m.total), 'total opportunities', plain(P.moon)],
+    ['Won value', short(m.wonValue), 'SAR · '+m.wonCount+' won and handed over', plain(P.oasis)],
+    ['Awaiting evaluation', String(m.submitted), m.openCount+' open in total', plain(P.sea)],
+    ['Average deal size', m.valuedCount?short(m.avgDeal):'—', 'SAR · '+m.valuedCount+' bids with a contract value', plain(P.sunset)],
+    ['Etimad share', m.classified?m.etimadShare.toFixed(0)+'%':'—', m.etimadCount+' of '+m.classified+' classified bids', plain(P.sun)],
+    ['Cancelled / dropped', m.noBidRate.toFixed(1)+'%', m.noBidCount+' bids withdrawn', plain(P.coral)]
+  ];
+  content.appendChild(h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:'4px', marginBottom:'20px' } },
+    kpiDefs.map(k => kpiCard(k[0],k[1],k[2],k[3]))));
+
+  /* funnel + sell */
+  const fills = [d?'#4A5661':P.lsilver, P.silver, P.moon, P.purple, P.sea, P.oasis, P.oasis];
+  const top = Math.max(1, scope.length);
+  const funnelCard = card(
+    cardTitle('Bid pipeline by stage','Click a stage to filter'),
+    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'16px' } }, 'Cumulative bids that reached each stage, with contract value. Win rate = Won \u00f7 (Won + Lost), excluding cancelled and dropped.'),
+    h('div', { style:{ display:'flex', flexDirection:'column', gap:'10px' } }, STAGE_ORDER.map((label,i) => {
+      const at = scope.filter(o => o.idx>=i);
+      const w = Math.max(2, Math.round(pct(at.length, top)));
+      const barInk = i<=1 ? (d?'#FFFFFF':P.onyx) : (i>=4 ? P.onyx : '#FFFFFF');
+      return h('div', { class:'clickable', onclick:() => set({ stage: s.stage===label?null:label, outcome:null }),
+          title: at.length+' bids · '+sar(sum(at))+' · '+pct(at.length,top).toFixed(0)+'% of bids in scope',
+          style:{ display:'grid', gridTemplateColumns:'minmax(100px,150px) minmax(120px,1fr) 84px', alignItems:'center', gap:'12px' } },
+        h('div', { style:{ fontSize:'13px', color: s.stage===label ? (d?P.moon:P.purple) : 'var(--ink)' } }, label),
+        h('div', { style:{ height:'26px', background:'var(--track)' } }, h('div', { style:{ height:'26px', width:w+'%', background:fills[i], display:'flex', alignItems:'center', paddingLeft:'10px', color:barInk, fontSize:'12px', minWidth:'26px' } }, String(at.length))),
+        h('div', { style:{ fontSize:'13px', textAlign:'right', color:'var(--ink2)', whiteSpace:'nowrap' } }, sar(sum(at)))
+      );
+    })),
+    h('div', { style:{ marginTop:'16px', paddingTop:'14px', borderTop:'1px solid var(--line)', display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:'4px' } },
+      ['Won','Lost','Cancelled','Dropped'].map(k => { const list = scope.filter(x=>x.status===k); const on = s.outcome===k;
+        return h('div', { class:'clickable', onclick:() => set({ outcome: on?null:k, stage:null }),
+          style:{ padding:'12px', border:'1px solid '+(on?P.purple:'var(--line)'), background: on?P.purple:'transparent', color: on?'#FFFFFF':'var(--ink)' } },
+          h('div', { style:{ fontSize:'11px', letterSpacing:'.08em', textTransform:'uppercase', opacity:.72, marginBottom:'6px' } }, k),
+          h('div', { style:{ fontSize:'19px', fontWeight:'300' } }, String(list.length)),
+          h('div', { style:{ fontSize:'11px', opacity:.72, marginTop:'4px' } }, sar(sum(list)))); }))
+  );
+
+  const sellScope = scoped({ ignoreSell:true });
+  const sellValue = sum(sellScope) || 1;
+  const sellGroups = [{ key:'Sell Direct', label:'Sell direct', list: sellScope.filter(o=>o.direct) }, { key:'Sell Through', label:'Sell through', list: sellScope.filter(o=>!o.direct) }];
+  const sellVariants = {};
+  sellScope.forEach(o => { const a = sellVariants[o.sell] = sellVariants[o.sell] || { n:0,v:0,w:0,l:0,direct:o.direct }; a.n++; a.v+=o.value; if(o.status==='Won')a.w++; if(o.status==='Lost')a.l++; });
+  const variantMax = Math.max(1, ...Object.keys(sellVariants).map(k=>sellVariants[k].v));
+  const sellCard = card(
+    cardTitle('Sell direct vs. sell through','Click to filter'),
+    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'16px' } }, 'Share of contract value by route to market.'),
+    h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:'4px', marginBottom:'20px' } },
+      sellGroups.map((g,i) => { const on = s.sell===g.key, act = on || (s.sell==='All'&&i===0);
+        return h('div', { class:'clickable', onclick:() => set({ sell: on?'All':g.key }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'18px', border:'1px solid '+(act?P.purple:'var(--line)') } },
+          h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82, marginBottom:'10px' } }, g.label),
+          h('div', { style:{ fontSize:'36px', fontWeight:'300', lineHeight:'1', marginBottom:'8px' } }, pct(sum(g.list),sellValue).toFixed(0)+'%'),
+          h('div', { style:{ fontSize:'12px', opacity:.72 } }, g.list.length+' bids \u00b7 '+sar(sum(g.list))),
+          h('div', { style:{ fontSize:'12px', opacity:.72, marginTop:'4px' } }, rate(g.list.filter(o=>o.status==='Won').length, g.list.filter(o=>o.status==='Lost').length)+' win rate')); })),
+    h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } },
+      Object.keys(sellVariants).sort((a,b)=>sellVariants[b].v-sellVariants[a].v).map(k => { const a = sellVariants[k]; const key = a.direct?'Sell Direct':'Sell Through'; const op = (s.sell==='All'||s.sell===key)?1:0.4;
+        return h('div', { class:'clickable', onclick:() => set({ sell: s.sell===key?'All':key }), style:{ opacity:op } },
+          h('div', { style:{ display:'flex', justifyContent:'space-between', gap:'12px', fontSize:'13px', marginBottom:'6px' } }, h('span',{},k), h('span',{style:{color:'var(--ink2)',whiteSpace:'nowrap'}}, a.n+' bids \u00b7 '+sar(a.v)+' \u00b7 '+rate(a.w,a.l))),
+          h('div', { style:{ height:'7px', background:'var(--track)' } }, h('div',{ style:{ height:'7px', width:pct(a.v,variantMax)+'%', background: a.direct?P.purple:P.moon } }))); }))
+  );
+  content.appendChild(h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))', gap:'20px', marginBottom:'20px' } }, funnelCard, sellCard));
+
+  /* channel + portfolio */
+  const chScope = scoped({ ignoreChannel:true });
+  const classified = chScope.filter(o=>o.channel==='Etimad').length + chScope.filter(o=>o.channel==='Non Etimad').length;
+  const channelCard = card(
+    cardTitle('Etimad vs. non-Etimad','Click to filter'),
+    h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:'4px', marginBottom:'18px' } },
+      ['Etimad','Non Etimad'].map((k,i) => { const list = chScope.filter(o=>o.channel===k); const on = s.channel===k, act = on || (s.channel==='All'&&i===0);
+        return h('div', { class:'clickable', onclick:() => set({ channel: on?'All':k }), style:{ background: act?P.purple:'var(--panel2)', color: act?'#FFFFFF':'var(--ink)', padding:'16px', border:'1px solid '+(act?P.purple:'var(--line)') } },
+          h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82, marginBottom:'8px' } }, k==='Etimad'?'Etimad tenders':'Non-Etimad'),
+          h('div', { style:{ fontSize:'30px', fontWeight:'300', marginBottom:'6px' } }, pct(list.length, classified||1).toFixed(0)+'%'),
+          h('div', { style:{ fontSize:'12px', opacity:.72 } }, list.length+' bids \u00b7 '+sar(sum(list))),
+          h('div', { style:{ fontSize:'12px', opacity:.72 } }, rate(list.filter(o=>o.status==='Won').length, list.filter(o=>o.status==='Lost').length)+' win rate')); })),
+    (() => { const agg = {}; chScope.forEach(o => agg[o.reqType]=(agg[o.reqType]||0)+1); const max = Math.max(1,...Object.keys(agg).map(k=>agg[k])); const colors=[P.purple,P.sea,P.moon,P.sunset];
+      return h('div', { style:{ display:'flex', flexDirection:'column', gap:'10px' } }, Object.keys(agg).sort((a,b)=>agg[b]-agg[a]).map((k,i) => h('div', {},
+        h('div', { style:{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'6px' } }, h('span',{}, 'Type \u00b7 '+(k==='—'?'not recorded':k)), h('span',{style:{color:'var(--ink2)'}}, agg[k]+' bids \u00b7 '+pct(agg[k],chScope.length||1).toFixed(0)+'%')),
+        h('div', { style:{ height:'7px', background:'var(--track)' } }, h('div', { style:{ height:'7px', width:pct(agg[k],max)+'%', background:colors[i%colors.length] } }))))); })()
+  );
+
+  const pfScope = scoped({ ignorePortfolio:true });
+  const pfAgg = {}; pfScope.forEach(o => { const a = pfAgg[o.portfolio] = pfAgg[o.portfolio]||{n:0,v:0,w:0,l:0}; a.n++; a.v+=o.value; if(o.status==='Won')a.w++; if(o.status==='Lost')a.l++; });
+  const pfKeys = Object.keys(pfAgg).sort((a,b)=>pfAgg[b].v-pfAgg[a].v);
+  const pfMax = Math.max(1, ...pfKeys.map(k=>pfAgg[k].v));
+  const portfolioCard = card(
+    cardTitle('Business portfolio','Click to filter'),
+    h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } }, pfKeys.map(k => { const a = pfAgg[k]; const on = s.portfolio===k; const op = (s.portfolio==='All'||on)?1:0.4;
+      return h('div', { class:'clickable', onclick:() => set({ portfolio: on?'All':k }), style:{ opacity:op } },
+        h('div', { style:{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'6px' } }, h('span',{},k), h('span',{style:{color:'var(--ink2)',whiteSpace:'nowrap'}}, a.n+' bids \u00b7 '+sar(a.v)+' \u00b7 '+rate(a.w,a.l))),
+        h('div', { style:{ height:'7px', background:'var(--track)' } }, h('div',{ style:{ height:'7px', width:pct(a.v,pfMax)+'%', background: on?P.coral:P.purple } }))); }))
+  );
+  content.appendChild(h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))', gap:'20px', marginBottom:'20px' } }, channelCard, portfolioCard));
+
+  /* table */
+  const q = s.query.trim().toLowerCase();
+  let tableRows = scope.filter(o =>
+    (!s.stage || (STAGE_ORDER.indexOf(s.stage)>-1 ? o.idx >= STAGE_ORDER.indexOf(s.stage) : o.stage===s.stage)) &&
+    (!s.outcome || o.status===s.outcome) &&
+    (!q || (o.name+' '+o.num+' '+o.account+' '+o.owner+' '+o.portfolio).toLowerCase().indexOf(q) > -1));
+  const dir = s.sortDir==='asc'?1:-1;
+  tableRows = tableRows.slice().sort((a,b) => { let x=a[s.sortKey], y=b[s.sortKey];
+    if (x==null) x = typeof y==='number' ? -1 : ''; if (y==null) y = typeof x==='number' ? -1 : '';
+    return (typeof x==='number' && typeof y==='number' ? x-y : String(x).localeCompare(String(y))) * dir; });
+  const total = tableRows.length, pageCount = Math.max(1, Math.ceil(total/pageSize)), page = Math.min(s.page, pageCount);
+  const startIdx = (page-1)*pageSize;
+  const pageRows = tableRows.slice(startIdx, startIdx+pageSize);
+
+  const tableCard = h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)' } },
+    h('div', { style:{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'16px', flexWrap:'wrap', padding:'20px 20px 14px' } },
+      h('div', { style:{ fontSize:'16px' } }, 'Opportunities \u00b7 '+total+' matching'),
+      h('input', { type:'text', value:s.query, placeholder:'Search opportunity, account or owner', style:{ padding:'9px 12px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px', width:'300px', maxWidth:'100%' }, oninput:e => set({ query:e.target.value }) })
+    ),
+    h('div', { style:{ overflowX:'auto' } },
+      h('table', {},
+        h('thead', {}, h('tr', {}, COLS.map(c => h('th', { onclick:() => setState({ sortKey:c.key, sortDir: s.sortKey===c.key ? (s.sortDir==='asc'?'desc':'asc') : (c.key==='value'||c.key==='created'||c.key==='closing'?'desc':'asc') }),
+          style:{ color: s.sortKey===c.key ? P.purple : 'var(--ink2)', textAlign: c.align } }, c.label+(s.sortKey===c.key ? (s.sortDir==='asc'?' \u25b2':' \u25bc') : ''))))),
+        h('tbody', {}, pageRows.length ? pageRows.map(o => { const sv = stageStyle(o.stage);
+          return h('tr', { class:'datarow rowhover clickable', onclick:() => setState({ detailId:o.id }) },
+            h('td', {}, o.name), h('td', {}, o.account), h('td', {}, o.line), h('td', {}, o.sell),
+            h('td', {}, h('span', { style:{ fontSize:'12px', padding:'4px 8px', background:sv[0], color:sv[1], border:'1px solid '+sv[2] } }, o.stage)),
+            h('td', { style:{ textAlign:'right' } }, o.value?short(o.value):'—'), h('td', {}, o.owner), h('td', { style:{ textAlign:'right' } }, fmtDate(o.created)), h('td', { style:{ textAlign:'right' } }, fmtDate(o.closing))); })
+          : [h('tr', {}, h('td', { colspan:9, style:{ textAlign:'center', padding:'40px', color:'var(--ink2)' } }, 'No opportunities match the current filters.'))])
+      )
+    ),
+    h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', padding:'14px 20px', flexWrap:'wrap' } },
+      h('div', { style:{ fontSize:'12px', color:'var(--ink2)' } }, total ? ('Showing '+(startIdx+1)+'\u2013'+Math.min(startIdx+pageSize,total)+' of '+total) : ''),
+      h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
+        h('div', { class:'clickable', onclick:() => setState({ page:Math.max(1,page-1) }), style:{ fontSize:'13px', color: page>1?'var(--ink)':'var(--ink2)' } }, 'Prev'),
+        h('div', { style:{ fontSize:'13px', color:'var(--ink2)' } }, 'Page '+page+' / '+pageCount),
+        h('div', { class:'clickable', onclick:() => setState({ page:Math.min(pageCount,page+1) }), style:{ fontSize:'13px', color: page<pageCount?'var(--ink)':'var(--ink2)' } }, 'Next')
+      )
+    )
+  );
+  content.appendChild(tableCard);
+}
+
+function paintSubmissions(content, s, d){
+  const w = weekWindows();
+  const subScope = scoped({ ignorePeriod:true });
+  const inWin = (o,win) => !!o.submitted && o.submitted>=win.from && o.submitted<=win.to;
+  const sum = a => a.reduce((x,o)=>x+o.value,0);
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', padding:'12px 20px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
+    (s.hasSubCol?'Grouped by Customer Submission Date':'No Customer Submission Date column in this export — grouped by Close Date')+' \u00b7 weeks run Monday to Sunday \u00b7 today is '+fmtDate(w.today)));
+
+  const bucketDefs = [
+    { key:'last', label:'Last week', win:w.last, mark:P.silver, range: fmtDate(w.last.from)+' \u2013 '+fmtDate(w.last.to) },
+    { key:'current', label:'Current week', win:w.current, mark:P.coral, range: fmtDate(w.current.from)+' \u2013 '+fmtDate(w.current.to) },
+    { key:'next', label:'Next week', win:w.next, mark:P.sea, range: fmtDate(w.next.from)+' \u2013 '+fmtDate(w.next.to) },
+    { key:'upcoming', label:'All upcoming', win:w.upcoming, mark:P.oasis, range: 'from '+fmtDate(w.upcoming.from) }
+  ].map(b => { const list = subScope.filter(o => inWin(o,b.win)); return Object.assign({},b,{ list }); });
+
+  content.appendChild(h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:'4px', marginBottom:'20px' } },
+    bucketDefs.map(b => { const on = s.bucket===b.key;
+      return h('div', { class:'clickable', onclick:() => setState({ bucket:b.key }), style:{ background: on?P.purple:'var(--panel)', color: on?'#FFFFFF':'var(--ink)', border:'1px solid '+(on?P.purple:'var(--line)'), padding:'18px', display:'flex', flexDirection:'column', gap:'10px', minHeight:'140px' } },
+        h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } }, dot(on?'#FFFFFF':b.mark), h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', opacity:.82 } }, b.label)),
+        h('div', { style:{ fontSize:'30px', fontWeight:'300' } }, String(b.list.length)),
+        h('div', { style:{ fontSize:'12px', opacity:.72 } }, sar(sum(b.list))),
+        h('div', { style:{ marginTop:'auto', fontSize:'12px', opacity:.68 } }, b.range)); })
+  ));
+
+  const activeBucket = bucketDefs.filter(b=>b.key===s.bucket)[0] || bucketDefs[1];
+  const sq = s.subQuery.trim().toLowerCase();
+  const subDir = s.subSortDir==='asc'?1:-1;
+  let subList = activeBucket.list.filter(o => !sq || (o.name+' '+o.num+' '+o.account+' '+o.owner).toLowerCase().indexOf(sq)>-1);
+  subList = subList.slice().sort((a,b) => { let x=a[s.subSortKey], y=b[s.subSortKey];
+    if (x==null) x = typeof y==='number' ? -1 : ''; if (y==null) y = typeof x==='number' ? -1 : '';
+    return (typeof x==='number' && typeof y==='number' ? x-y : String(x).localeCompare(String(y))) * subDir; });
+
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)' } },
+    h('div', { style:{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'16px', flexWrap:'wrap', padding:'20px 20px 14px' } },
+      h('div', {}, h('div', { style:{ fontSize:'16px' } }, activeBucket.label+' \u00b7 '+activeBucket.range),
+        h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginTop:'4px' } }, subList.length+' submissions \u00b7 '+sar(sum(subList))+' contract value \u00b7 click a column to sort, a row for bid detail')),
+      h('input', { type:'text', value:s.subQuery, placeholder:'Search opportunity, account or owner', style:{ padding:'9px 12px', border:'1px solid var(--line)', background:'var(--panel)', color:'var(--ink)', fontSize:'13px', width:'300px', maxWidth:'100%' }, oninput:e => setState({ subQuery:e.target.value }) })
+    ),
+    h('div', { style:{ overflowX:'auto' } },
+      h('table', {},
+        h('thead', {}, h('tr', {}, SUB_COLS.map(c => h('th', { onclick:() => setState({ subSortKey:c.key, subSortDir: s.subSortKey===c.key ? (s.subSortDir==='asc'?'desc':'asc') : (c.key==='value'?'desc':'asc') }),
+          style:{ color: s.subSortKey===c.key ? P.purple : 'var(--ink2)', textAlign:c.align } }, c.label+(s.subSortKey===c.key ? (s.subSortDir==='asc'?' \u25b2':' \u25bc') : ''))))),
+        h('tbody', {}, subList.length ? subList.map(o => h('tr', { class:'datarow rowhover clickable', onclick:() => setState({ detailId:o.id }) },
+            h('td', {}, fmtDate(o.submitted)), h('td', {}, o.name), h('td', {}, o.account), h('td', {}, o.line),
+            h('td', {}, o.stage), h('td', { style:{ textAlign:'right' } }, o.value?short(o.value):'—'), h('td', {}, o.owner)))
+          : [h('tr', {}, h('td', { colspan:7, style:{ textAlign:'center', padding:'40px', color:'var(--ink2)' } }, 'No submissions in this window for the current filters.'))])
+      )
+    )
+  ));
+}
+
+function paintDetail(root, s, d, stageStyle){
+  if (!s.detailId) return;
+  const o = s.data.filter(x => x.id===s.detailId)[0];
+  if (!o) return;
+  const facts = [
+    ['Outcome', o.status], ['Owner', o.owner], ['Service line', o.line], ['Opportunity type', o.reqType],
+    ['Etimad type', o.channel==='Unspecified'?'Not recorded':o.channel], ['Business portfolio', o.portfolio],
+    ['Created', fmtDate(o.created)], ['Submission', fmtDate(o.submitted)]
+  ];
+  const close = () => setState({ detailId:null });
+  const overlay = h('div', { style:{ position:'fixed', inset:'0', zIndex:'40', display:'flex', justifyContent:'flex-end' } },
+    h('div', { onclick:close, style:{ position:'absolute', inset:'0', background:'rgba(29,37,45,.5)' } }),
+    h('div', { style:{ position:'relative', width:'min(480px,100%)', background:'var(--bg)', borderLeft:'1px solid var(--line)', height:'100%', overflowY:'auto' } },
+      h('div', { style:{ background:P.purple, color:'#FFFFFF', padding:'22px 24px', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'16px' } },
+        h('div', {},
+          h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', opacity:.82, marginBottom:'10px' } }, o.num+' \u00b7 '+o.sell),
+          h('div', { style:{ fontSize:'20px', fontWeight:'300', lineHeight:'1.3' } }, o.name),
+          h('div', { style:{ fontSize:'13px', opacity:.8, marginTop:'6px' } }, o.account)
+        ),
+        h('div', { class:'clickable', onclick:close, style:{ fontSize:'18px' } }, '\u2715')
+      ),
+      h('div', { style:{ padding:'20px 24px', borderBottom:'1px solid var(--line)', display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'16px' } },
+        h('div', {}, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'8px' } }, 'Total contract value'), h('div', { style:{ fontSize:'30px', fontWeight:'300' } }, o.value?sar(o.value):'Not recorded')),
+        h('div', { style:{ textAlign:'right' } }, h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'8px' } }, 'Stage'), h('div', { style:{ fontSize:'14px' } }, o.stage))
+      ),
+      h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', borderBottom:'1px solid var(--line)' } },
+        facts.map(f => h('div', { style:{ padding:'16px 18px', borderRight:'1px solid var(--line)', borderBottom:'1px solid var(--line)' } },
+          h('div', { style:{ fontSize:'11px', letterSpacing:'.1em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'6px' } }, f[0]),
+          h('div', { style:{ fontSize:'14px' } }, f[1])))
+      ),
+      h('div', { style:{ padding:'20px 24px' } },
+        h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'12px' } }, 'Bid timeline'),
+        h('div', {},
+          h('div', { style:{ padding:'6px 0', fontSize:'13px' } }, '\u2022 Opportunity created \u2014 ' + o.portfolio + ' portfolio \u00b7 ' + o.reqType + ' \u00b7 ' + fmtDate(o.created)),
+          h('div', { style:{ padding:'6px 0', fontSize:'13px' } }, '\u2022 ' + (o.status==='Open' ? 'Current stage: '+o.stage : 'Outcome: '+o.status)),
+          h('div', { style:{ padding:'6px 0', fontSize:'13px' } }, '\u2022 Close date \u2014 ' + (o.value?sar(o.value)+' contract value':'No contract value recorded') + ' \u00b7 ' + fmtDate(o.closing))
+        )
+      )
+    )
+  );
+  root.appendChild(overlay);
+}
+
+/* ---------------- init ---------------- */
+loadBaseline();
+render();
+})();
+</script>
+</body>
+</html>
