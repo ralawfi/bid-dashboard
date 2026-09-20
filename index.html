@@ -90,7 +90,7 @@ const rate = (w, l) => (w + l) ? pct(w, w + l).toFixed(1) + '%' : '—';
 const short = v => !v ? '0' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'K' : String(Math.round(v));
 const sar = v => 'SAR ' + short(v);
 function todayIso() { const n = new Date(); return iso(new Date(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()))); }
-function mondayOf(isoDate) { const d = new Date(isoDate + 'T00:00:00Z'); const wd = (d.getUTCDay() + 6) % 7; return iso(new Date(d.getTime() - wd * DAY)); }
+function sundayOf(isoDate) { const d = new Date(isoDate + 'T00:00:00Z'); const wd = d.getUTCDay(); return iso(new Date(d.getTime() - wd * DAY)); }
 function shift(isoDate, n) { return iso(new Date(new Date(isoDate + 'T00:00:00Z').getTime() + n * DAY)); }
 function parseDate(v) {
   const s = String(v || '').trim();
@@ -217,9 +217,9 @@ function metrics(list){
   };
 }
 function weekWindows(){
-  const today = todayIso(), mon = mondayOf(today);
-  return { today, last:{ from: shift(mon,-7), to: shift(mon,-1) }, current:{ from: mon, to: shift(mon,6) },
-    next:{ from: shift(mon,7), to: shift(mon,13) }, upcoming:{ from: shift(mon,7), to:'9999-12-31' } };
+  const today = todayIso(), sun = sundayOf(today);
+  return { today, last:{ from: shift(sun,-7), to: shift(sun,-1) }, current:{ from: sun, to: shift(sun,6) },
+    next:{ from: shift(sun,7), to: shift(sun,13) }, upcoming:{ from: shift(sun,7), to:'9999-12-31' } };
 }
 function loadText(t, label){
   const res = fromCSV(t);
@@ -686,14 +686,14 @@ function paintSubmissions(content, s, d){
   }
   content.appendChild(subFilterCard);
   content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', borderRadius:'16px', padding:'12px 20px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
-    (s.hasSubCol?'Grouped by Customer Submission Date':'No Customer Submission Date column in this export — grouped by Close Date')+' \u00b7 weeks run Monday to Sunday \u00b7 today is '+fmtDate(w.today)));
+    (s.hasSubCol?'Grouped by Customer Submission Date':'No Customer Submission Date column in this export — grouped by Close Date')+' \u00b7 weeks run Sunday to Saturday \u00b7 today is '+fmtDate(w.today)+' \u00b7 last week shows bids at Submitted \u2014 under evaluation, other weeks show bids at Qualified in progress'));
 
   const bucketDefs = [
-    { key:'last', label:'Last week', win:w.last, mark:P.silver, range: fmtDate(w.last.from)+' \u2013 '+fmtDate(w.last.to) },
-    { key:'current', label:'Current week', win:w.current, mark:P.coral, range: fmtDate(w.current.from)+' \u2013 '+fmtDate(w.current.to) },
-    { key:'next', label:'Next week', win:w.next, mark:P.sea, range: fmtDate(w.next.from)+' \u2013 '+fmtDate(w.next.to) },
-    { key:'upcoming', label:'All upcoming', win:w.upcoming, mark:P.oasis, range: 'from '+fmtDate(w.upcoming.from) }
-  ].map(b => { const list = subScope.filter(o => inWin(o,b.win)); return Object.assign({},b,{ list }); });
+    { key:'last', label:'Last week', win:w.last, mark:P.silver, range: fmtDate(w.last.from)+' \u2013 '+fmtDate(w.last.to), stage:'Submitted \u2014 under evaluation' },
+    { key:'current', label:'Current week', win:w.current, mark:P.coral, range: fmtDate(w.current.from)+' \u2013 '+fmtDate(w.current.to), stage:'Qualified in progress' },
+    { key:'next', label:'Next week', win:w.next, mark:P.sea, range: fmtDate(w.next.from)+' \u2013 '+fmtDate(w.next.to), stage:'Qualified in progress' },
+    { key:'upcoming', label:'All upcoming', win:w.upcoming, mark:P.oasis, range: 'from '+fmtDate(w.upcoming.from), stage:'Qualified in progress' }
+  ].map(b => { const list = subScope.filter(o => inWin(o,b.win) && o.stage===b.stage); return Object.assign({},b,{ list }); });
 
   content.appendChild(h('div', { class:'grid-4' },
     bucketDefs.map(b => { const on = s.bucket===b.key;
