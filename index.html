@@ -180,7 +180,7 @@ const pageSize = 12;
 const state = {
   view:'overview', theme:'light',
   data:[], loaded:false, source:'Loading baseline export…', message:'', hasSubCol:false,
-  period:'ALL', qBasis:'created',
+  period:'ALL',
   sells:[], channels:[], portfolios:[], lines:[], stage:null, outcome:null, query:'',
   sortKey:'value', sortDir:'desc', page:1,
   bucket:'current', subQuery:'', subSortKey:'submitted', subSortDir:'asc', detailId:null
@@ -188,7 +188,7 @@ const state = {
 function setState(patch){ Object.assign(state, patch); render(); }
 function set(patch){ setState(Object.assign({ page:1 }, patch)); }
 const dark = () => state.theme === 'dark';
-const basisDate = o => state.qBasis === 'close' ? o.closing : o.created;
+const basisDate = o => o.closing;
 const periodRange = key => { const p = PERIODS.filter(x => x.key === key)[0] || PERIODS[0]; return { from: p.from, to: p.to || todayIso() }; };
 const inPeriod = (o, key) => { const r = periodRange(key); const t = basisDate(o); return !!t && t >= r.from && t <= r.to; };
 function scoped(opts){
@@ -338,7 +338,7 @@ function render(){
   root.innerHTML = '';
 
   /* ---- header ---- */
-  const views = [{ key:'overview', label:'Pipeline overview' }, { key:'submissions', label:'Submissions by week' }];
+  const views = [{ key:'executive', label:'Executive summary' }, { key:'overview', label:'Pipeline overview' }, { key:'submissions', label:'Submissions by week' }];
   const header = h('div', { style:{ background:'var(--header)', color:'#FFFFFF', padding:'14px 24px 0', display:'flex', flexWrap:'wrap', alignItems:'center', justifyContent:'space-between', gap:'16px 24px', borderRadius:'0 0 24px 24px' } },
     h('div', { style:{ display:'flex', alignItems:'center', gap:'28px', flexWrap:'wrap', paddingBottom:'14px' } },
       h('img', { src:LOGO_DATA, alt:'Upsource by Solutions', style:{ height:'26px', width:'auto', display:'block' } }),
@@ -369,7 +369,7 @@ function render(){
   content.appendChild(h('div', { style:{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'24px', flexWrap:'wrap', marginBottom:'24px' } },
     h('div', {},
       h('div', { style:{ fontSize:'12px', letterSpacing:'.14em', textTransform:'uppercase', color:'var(--ink2)', marginBottom:'8px' } }, 'Commercial & Bid Management'),
-      h('div', { style:{ fontSize:'30px', fontWeight:'300', letterSpacing:'-.01em' } }, s.view==='overview' ? 'Opportunity & Bid Performance' : 'Submissions by week')
+      h('div', { style:{ fontSize:'30px', fontWeight:'300', letterSpacing:'-.01em' } }, s.view==='overview' ? 'Opportunity & Bid Performance' : s.view==='submissions' ? 'Submissions by week' : 'Executive Summary')
     ),
     h('div', { style:{ display:'flex', gap:'12px', flexWrap:'wrap' } },
       fileInput,
@@ -383,7 +383,8 @@ function render(){
   if (!s.loaded) { content.appendChild(h('div', { style:{ padding:'40px', textAlign:'center', color:'var(--ink2)' } }, 'Loading…')); return; }
 
   if (s.view === 'overview') paintOverview(content, s, d, scope, m, sum, stageStyle);
-  else paintSubmissions(content, s, d);
+  else if (s.view === 'submissions') paintSubmissions(content, s, d);
+  else paintExecutive(content, s, d, scope, m, sum, stageStyle);
 
   paintDetail(root, s, d, stageStyle);
 }
@@ -398,6 +399,155 @@ function kpiCard(label, value, sub, style){
 function card(...kids){ return h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'24px', borderRadius:'20px', boxShadow:'0 1px 3px rgba(29,37,45,.06)' } }, ...kids); }
 function cardTitle(t, hint){ return h('div', { style:{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:'16px', marginBottom:'16px' } }, h('div', { style:{ fontSize:'16px', fontWeight:'700' } }, t), hint ? h('div', { style:{ fontSize:'12px', color:'var(--ink2)' } }, hint) : null); }
 
+function buildFunnelCard(scope, s, d){
+  const fills = [d?'#4A5661':P.lsilver, P.silver, P.moon, P.purple, P.sea, P.oasis, P.oasis];
+  const top = Math.max(1, scope.length);
+  const counts = STAGE_ORDER.map((label,i) => scope.filter(o => o.idx>=i).length);
+  const SHORT_STAGE = ['Identified','To qualify','Qualifying','Submitted','Won (eval)','Won','Handover'];
+  const barW = 30, barGap = 16, barMaxH = 118, baseY = 150;
+  const chartW = STAGE_ORDER.length*barW + (STAGE_ORDER.length-1)*barGap;
+  const startX = 16, viewW = chartW + startX*2;
+  const barKids = [];
+  STAGE_ORDER.forEach((label,i) => {
+    const x = startX + i*(barW+barGap);
+    const cnt = counts[i];
+    const hgt = Math.max(4, (cnt/top)*barMaxH);
+    const y = baseY - hgt;
+    const on = s.stage===label;
+    const clickFn = () => set({ stage: on?null:label, outcome:null });
+    barKids.push(se('rect', { x, y:0, width:barW, height:baseY+34, fill:'transparent', class:'clickable', onclick:clickFn }));
+    barKids.push(se('rect', { x, y, width:barW, height:hgt, rx:7, fill: on ? P.coral : fills[i], class:'clickable', onclick:clickFn }));
+    barKids.push(se('text', { x:x+barW/2, y:y-8, 'text-anchor':'middle', style:'font-size:11px;font-weight:700;fill:var(--ink)' }, String(cnt)));
+    barKids.push(se('text', { x:x+barW/2, y:baseY+16, 'text-anchor':'end', transform:'rotate(-38 '+(x+barW/2)+' '+(baseY+16)+')', style:'font-size:9px;fill:var(--ink2)' }, SHORT_STAGE[i]));
+  });
+  const funnelSvg = se('svg', { viewBox:'0 0 '+viewW+' 210', width:'100%', height:'220', style:'display:block' }, barKids);
+  return card(
+    cardTitle('Bid pipeline by stage','Click a stage to filter'),
+    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'8px' } }, 'Cumulative bids that reached each stage.'),
+    funnelSvg
+  );
+}
+function buildOutcomesCard(scope, s, d, sum){
+  const outcomeDefs = ['Won','Lost','Cancelled','Dropped'].map((k,i) => ({ key:k, color:[P.oasis,P.coral,P.silver,P.lsilver][i], list: scope.filter(x=>x.status===k) }));
+  const outcomeTotal = outcomeDefs.reduce((x,o)=>x+o.list.length,0) || 1;
+  const R = 54, CX = 64, CY = 64, SW = 22, CIRC = 2*Math.PI*R;
+  let cum = 0;
+  const donutSegs = outcomeDefs.filter(o=>o.list.length>0).map(o => {
+    const frac = o.list.length/outcomeTotal;
+    const seg = se('circle', { cx:CX, cy:CY, r:R, fill:'none', stroke:o.color, 'stroke-width':SW,
+      'stroke-dasharray': (frac*CIRC)+' '+CIRC, 'stroke-dashoffset': -cum*CIRC, class:'clickable',
+      onclick:() => set({ outcome: s.outcome===o.key?null:o.key, stage:null }) });
+    cum += frac;
+    return seg;
+  });
+  const donutSvg = se('svg', { viewBox:'0 0 128 128', width:'128', height:'128', style:'transform:rotate(-90deg)' },
+    se('circle', { cx:CX, cy:CY, r:R, fill:'none', stroke:'var(--track)', 'stroke-width':SW }),
+    donutSegs);
+  return card(
+    cardTitle('Outcomes','Click to filter'),
+    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'20px' } }, 'Win rate = Won \u00f7 (Won + Lost), excluding cancelled and dropped.'),
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'24px', flexWrap:'wrap' } },
+      h('div', { style:{ position:'relative', width:'128px', height:'128px', flex:'none' } },
+        donutSvg,
+        h('div', { style:{ position:'absolute', inset:'0', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' } },
+          h('div', { style:{ fontSize:'24px', fontWeight:'700' } }, String(outcomeDefs.reduce((x,o)=>x+o.list.length,0))),
+          h('div', { style:{ fontSize:'10px', color:'var(--ink2)', letterSpacing:'.06em', textTransform:'uppercase' } }, 'decided'))),
+      h('div', { style:{ display:'flex', flexDirection:'column', gap:'10px', flex:'1 1 160px' } },
+        outcomeDefs.map(o => { const on = s.outcome===o.key;
+          return h('div', { class:'clickable', onclick:() => set({ outcome: on?null:o.key, stage:null }),
+              style:{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 12px', borderRadius:'12px', background: on?(d?'rgba(79,0,140,.35)':'#F3ECF8'):'transparent' } },
+            dot(o.color, 10),
+            h('div', { style:{ fontSize:'13px', flex:'1' } }, o.key),
+            h('div', { style:{ fontSize:'13px', fontWeight:'700' } }, String(o.list.length)),
+            h('div', { style:{ fontSize:'12px', color:'var(--ink2)', width:'80px', textAlign:'right' } }, sar(sum(o.list)))); }))
+    )
+  );
+}
+
+function paintExecutive(content, s, d, scope, m, sum, stageStyle){
+  const pr = periodRange(s.period);
+  const filtersOn = s.sells.length + s.channels.length + s.portfolios.length + s.lines.length + (s.stage?1:0) + (s.outcome?1:0) + (s.query.trim()?1:0);
+
+  content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', borderRadius:'16px', padding:'12px 20px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'12px' } },
+    h('div', {}, scope.length+' bids in scope \u00b7 '+sar(sum(scope))+' total contract value \u00b7 '+fmtDate(pr.from)+' to '+fmtDate(pr.to)+(filtersOn?' \u00b7 '+filtersOn+' filter'+(filtersOn>1?'s':'')+' active':'')),
+    h('div', { class:'clickable', onclick:() => setState({ view:'overview' }), style:{ marginLeft:'auto', fontSize:'12px', color:P.purple, fontWeight:'700' } }, 'Adjust filters on Pipeline overview \u2192')
+  ));
+
+  /* precompute leaders and weekly focus, used by both the narrative and the cards below */
+  const lineAgg = {}; scope.forEach(o => { const a = lineAgg[o.line] = lineAgg[o.line]||{n:0,v:0,w:0,l:0}; a.n++; a.v+=o.value; if(o.status==='Won')a.w++; if(o.status==='Lost')a.l++; });
+  const topLineKeys = Object.keys(lineAgg).sort((a,b)=>lineAgg[b].v-lineAgg[a].v).slice(0,5);
+  const lineMax = Math.max(1, ...topLineKeys.map(k=>lineAgg[k].v));
+  const pfAgg = {}; scope.forEach(o => { const a = pfAgg[o.portfolio] = pfAgg[o.portfolio]||{n:0,v:0,w:0,l:0}; a.n++; a.v+=o.value; if(o.status==='Won')a.w++; if(o.status==='Lost')a.l++; });
+  const topPfKeys = Object.keys(pfAgg).sort((a,b)=>pfAgg[b].v-pfAgg[a].v).slice(0,5);
+  const pfMax = Math.max(1, ...topPfKeys.map(k=>pfAgg[k].v));
+
+  const w = weekWindows();
+  const subScope = scoped({ ignorePeriod:true });
+  const lastSubmitted = subScope.filter(o => o.submitted && o.submitted>=w.last.from && o.submitted<=w.last.to && o.stage==='Submitted \u2014 under evaluation');
+  const thisWeekQualifying = subScope.filter(o => o.submitted && o.submitted>=w.current.from && o.submitted<=w.current.to && o.stage==='Qualified in progress');
+
+  const narrative = [
+    scope.length+' bids are currently in scope, worth '+sar(sum(scope))+' in total contract value across '+fmtDate(pr.from)+' to '+fmtDate(pr.to)+'.',
+    (m.wonCount+m.lostCount) ? ('Win rate stands at '+m.winRate.toFixed(0)+'% on '+(m.wonCount+m.lostCount)+' decided bids, with '+m.wonCount+' won worth '+sar(m.wonValue)+'.') : 'No bids have been decided yet in this scope.',
+    topLineKeys[0] ? (topLineKeys[0]+' leads service-line volume at '+pct(lineAgg[topLineKeys[0]].n, scope.length||1).toFixed(0)+'% of bids.') : '',
+    m.openCount+' bids remain open, of which '+m.submitted+' are awaiting evaluation.',
+    (lastSubmitted.length ? (lastSubmitted.length+' bid'+(lastSubmitted.length>1?'s were':' was')+' submitted last week, and ') : '')+thisWeekQualifying.length+' bid'+(thisWeekQualifying.length!==1?'s are':' is')+' on track to submit this week.'
+  ].filter(Boolean).join(' ');
+
+  content.appendChild(card(
+    cardTitle('At a glance'),
+    h('div', { style:{ fontSize:'15px', lineHeight:'1.7' } }, narrative)
+  ));
+
+  const solid = (bg, mark) => ({ background:bg, color:'#FFFFFF', borderColor:bg, mark });
+  const plain = mark => ({ background:'var(--panel)', color:'var(--ink)', borderColor:'var(--line)', mark });
+  const headline = [
+    ['Win rate', (m.wonCount+m.lostCount)?m.winRate.toFixed(1)+'%':'—', (m.wonCount+m.lostCount)+' decided bids', solid(P.purple,P.coral)],
+    ['Pipeline value', short(m.pipeline), 'SAR \u00b7 '+m.openCount+' open bids', solid(P.dark,P.coral)],
+    ['Won value', short(m.wonValue), 'SAR \u00b7 '+m.wonCount+' won and handed over', plain(P.oasis)],
+    ['Bids in scope', String(m.total), 'total opportunities', plain(P.moon)]
+  ];
+  content.appendChild(h('div', { class:'grid-4' }, headline.map(k => kpiCard(k[0],k[1],k[2],k[3]))));
+
+  content.appendChild(h('div', { class:'charts-2' }, buildFunnelCard(scope,s,d), buildOutcomesCard(scope,s,d,sum)));
+
+  const leaderCard = (title, keys, agg, max, colorFn) => card(
+    cardTitle(title, 'Top '+keys.length+' by contract value'),
+    keys.length ? h('div', { style:{ display:'flex', flexDirection:'column', gap:'12px' } }, keys.map(k => { const a = agg[k];
+      return h('div', {},
+        h('div', { style:{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'6px' } }, h('span',{},k), h('span',{style:{color:'var(--ink2)',whiteSpace:'nowrap'}}, a.n+' bids \u00b7 '+sar(a.v)+' \u00b7 '+rate(a.w,a.l))),
+        h('div', { style:{ height:'8px', background:'var(--track)', borderRadius:'999px' } }, h('div',{ style:{ height:'8px', borderRadius:'999px', width:pct(a.v,max)+'%', background:colorFn(k) } }))); }))
+      : h('div', { style:{ padding:'12px 0', color:'var(--ink2)', fontSize:'13px' } }, 'No data in the current scope.')
+  );
+  content.appendChild(h('div', { class:'charts-2' },
+    leaderCard('Top service lines', topLineKeys, lineAgg, lineMax, k=>lineColor(k)),
+    leaderCard('Top portfolios', topPfKeys, pfAgg, pfMax, () => P.purple)
+  ));
+
+  const weekCard = (title, list) => card(
+    cardTitle(title),
+    h('div', { style:{ fontSize:'34px', fontWeight:'300', marginBottom:'6px' } }, String(list.length)),
+    h('div', { style:{ fontSize:'13px', color:'var(--ink2)' } }, sar(sum(list))+' contract value')
+  );
+  content.appendChild(h('div', { class:'charts-2' },
+    weekCard('Submitted last week', lastSubmitted),
+    weekCard('On track to submit this week', thisWeekQualifying)
+  ));
+
+  const openTop = scope.filter(o=>o.status==='Open').sort((a,b)=>b.value-a.value).slice(0,5);
+  content.appendChild(card(
+    cardTitle('Largest open opportunities', 'Top 5 by contract value \u00b7 click for detail'),
+    openTop.length ? h('div', { style:{ display:'flex', flexDirection:'column' } }, openTop.map((o,i) => { const sv = stageStyle(o.stage);
+      return h('div', { class:'clickable rowhover', onclick:() => setState({ view:'overview', detailId:o.id }),
+          style:{ display:'flex', alignItems:'center', gap:'14px', padding:'12px 8px', borderBottom: i<openTop.length-1?'1px solid var(--line)':'none', borderRadius:'10px' } },
+        h('div', { style:{ fontSize:'13px', flex:'1', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, o.name),
+        h('div', { style:{ fontSize:'12px', color:'var(--ink2)', width:'160px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, o.account),
+        h('span', { style:{ fontSize:'11px', padding:'4px 10px', borderRadius:'999px', background:sv[0], color:sv[1], border:'1px solid '+sv[2], whiteSpace:'nowrap' } }, o.stage),
+        h('div', { style:{ fontSize:'13px', fontWeight:'700', width:'90px', textAlign:'right' } }, o.value?short(o.value):'\u2014')); }))
+      : h('div', { style:{ padding:'20px', textAlign:'center', color:'var(--ink2)', fontSize:'13px' } }, 'No open opportunities in the current scope.')
+  ));
+}
+
 function paintOverview(content, s, d, scope, m, sum, stageStyle){
   /* filters */
   const filterCard = h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel)', padding:'22px 24px', borderRadius:'20px', boxShadow:'0 1px 3px rgba(29,37,45,.06)', display:'flex', flexDirection:'column', gap:'20px', marginBottom:'20px' } });
@@ -405,9 +555,7 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   filterCard.appendChild(h('div', {},
     h('div', { style:{ display:'flex', alignItems:'center', gap:'16px', flexWrap:'wrap', marginBottom:'12px' } },
       h('div', { style:{ fontSize:'11px', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--ink2)' } }, 'Period'),
-      h('div', { style:{ display:'flex', gap:'6px' } },
-        [{k:'created',l:'Created date'},{k:'close',l:'Close date'}].map(b => h('div', { class:'clickable', onclick:() => set({ qBasis:b.k }),
-          style: Object.assign({ padding:'6px 12px', fontSize:'12px', border:'1px solid', borderRadius:'999px' }, seg(s.qBasis===b.k)) }, b.l)))
+      h('div', { style:{ fontSize:'12px', color:'var(--ink2)' } }, 'by close date')
     ),
     h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap' } },
       PERIODS.map(p => { const on = s.period===p.key; const cnt = s.data.filter(o => inPeriod(o,p.key)).length;
@@ -452,7 +600,7 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   if (s.lines.length) activeChips.push({ label:s.lines.join(', '), clear:() => set({ lines:[] }) });
   if (s.query.trim()) activeChips.push({ label:'Search: '+s.query.trim(), clear:() => set({ query:'' }) });
   content.appendChild(h('div', { style:{ border:'1px solid var(--line)', background:'var(--panel2)', padding:'12px 20px', borderRadius:'16px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'12px', marginBottom:'20px', fontSize:'13px', color:'var(--ink2)' } },
-    h('div', {}, scope.length + ' bids in scope · ' + sar(sum(scope)) + ' total contract value · ' + fmtDate(pr.from) + ' to ' + fmtDate(pr.to) + ' by ' + (s.qBasis==='close'?'close date':'created date')),
+    h('div', {}, scope.length + ' bids in scope · ' + sar(sum(scope)) + ' total contract value · ' + fmtDate(pr.from) + ' to ' + fmtDate(pr.to) + ' by close date'),
     h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginLeft:'auto', alignItems:'center' } },
       activeChips.map(a => h('div', { class:'clickable', onclick:a.clear, style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 12px', borderRadius:'999px', background:P.purple, color:'#FFFFFF', fontSize:'12px' } }, a.label, h('span', { style:{ color:'#FF375E' } }, '\u2715'))),
       activeChips.length ? h('div', { class:'btn', onclick:() => set({ stage:null, outcome:null, lines:[], sells:[], channels:[], portfolios:[], query:'' }), style:{ padding:'6px 12px' } }, 'Clear all') : null
@@ -475,69 +623,9 @@ function paintOverview(content, s, d, scope, m, sum, stageStyle){
   content.appendChild(h('div', { class:'grid-4' },
     kpiDefs.map(k => kpiCard(k[0],k[1],k[2],k[3]))));
 
-  /* funnel (now a compact column chart, paired with outcomes) + sell */
-  const fills = [d?'#4A5661':P.lsilver, P.silver, P.moon, P.purple, P.sea, P.oasis, P.oasis];
-  const top = Math.max(1, scope.length);
-  const counts = STAGE_ORDER.map((label,i) => scope.filter(o => o.idx>=i).length);
-  const SHORT_STAGE = ['Identified','To qualify','Qualifying','Submitted','Won (eval)','Won','Handover'];
-  const barW = 30, barGap = 16, barMaxH = 118, baseY = 150;
-  const chartW = STAGE_ORDER.length*barW + (STAGE_ORDER.length-1)*barGap;
-  const startX = 16, viewW = chartW + startX*2;
-  const barKids = [];
-  STAGE_ORDER.forEach((label,i) => {
-    const x = startX + i*(barW+barGap);
-    const cnt = counts[i];
-    const hgt = Math.max(4, (cnt/top)*barMaxH);
-    const y = baseY - hgt;
-    const on = s.stage===label;
-    const clickFn = () => set({ stage: on?null:label, outcome:null });
-    barKids.push(se('rect', { x, y:0, width:barW, height:baseY+34, fill:'transparent', class:'clickable', onclick:clickFn }));
-    barKids.push(se('rect', { x, y, width:barW, height:hgt, rx:7, fill: on ? P.coral : fills[i], class:'clickable', onclick:clickFn }));
-    barKids.push(se('text', { x:x+barW/2, y:y-8, 'text-anchor':'middle', style:'font-size:11px;font-weight:700;fill:var(--ink)' }, String(cnt)));
-    barKids.push(se('text', { x:x+barW/2, y:baseY+16, 'text-anchor':'end', transform:'rotate(-38 '+(x+barW/2)+' '+(baseY+16)+')', style:'font-size:9px;fill:var(--ink2)' }, SHORT_STAGE[i]));
-  });
-  const funnelSvg = se('svg', { viewBox:'0 0 '+viewW+' 210', width:'100%', height:'220', style:'display:block' }, barKids);
-  const funnelCard = card(
-    cardTitle('Bid pipeline by stage','Click a stage to filter'),
-    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'8px' } }, 'Cumulative bids that reached each stage.'),
-    funnelSvg
-  );
-
-  const outcomeDefs = ['Won','Lost','Cancelled','Dropped'].map((k,i) => ({ key:k, color:[P.oasis,P.coral,P.silver,P.lsilver][i], list: scope.filter(x=>x.status===k) }));
-  const outcomeTotal = outcomeDefs.reduce((x,o)=>x+o.list.length,0) || 1;
-  const R = 54, CX = 64, CY = 64, SW = 22, CIRC = 2*Math.PI*R;
-  let cum = 0;
-  const donutSegs = outcomeDefs.filter(o=>o.list.length>0).map(o => {
-    const frac = o.list.length/outcomeTotal;
-    const seg = se('circle', { cx:CX, cy:CY, r:R, fill:'none', stroke:o.color, 'stroke-width':SW,
-      'stroke-dasharray': (frac*CIRC)+' '+CIRC, 'stroke-dashoffset': -cum*CIRC, class:'clickable',
-      onclick:() => set({ outcome: s.outcome===o.key?null:o.key, stage:null }) });
-    cum += frac;
-    return seg;
-  });
-  const donutSvg = se('svg', { viewBox:'0 0 128 128', width:'128', height:'128', style:'transform:rotate(-90deg)' },
-    se('circle', { cx:CX, cy:CY, r:R, fill:'none', stroke:'var(--track)', 'stroke-width':SW }),
-    donutSegs);
-  const outcomesCard = card(
-    cardTitle('Outcomes','Click to filter'),
-    h('div', { style:{ fontSize:'12px', color:'var(--ink2)', marginBottom:'20px' } }, 'Win rate = Won \u00f7 (Won + Lost), excluding cancelled and dropped.'),
-    h('div', { style:{ display:'flex', alignItems:'center', gap:'24px', flexWrap:'wrap' } },
-      h('div', { style:{ position:'relative', width:'128px', height:'128px', flex:'none' } },
-        donutSvg,
-        h('div', { style:{ position:'absolute', inset:'0', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' } },
-          h('div', { style:{ fontSize:'24px', fontWeight:'700' } }, String(outcomeDefs.reduce((x,o)=>x+o.list.length,0))),
-          h('div', { style:{ fontSize:'10px', color:'var(--ink2)', letterSpacing:'.06em', textTransform:'uppercase' } }, 'decided'))),
-      h('div', { style:{ display:'flex', flexDirection:'column', gap:'10px', flex:'1 1 160px' } },
-        outcomeDefs.map(o => { const on = s.outcome===o.key;
-          return h('div', { class:'clickable', onclick:() => set({ outcome: on?null:o.key, stage:null }),
-              style:{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 12px', borderRadius:'12px', background: on?(d?'rgba(79,0,140,.35)':'#F3ECF8'):'transparent' } },
-            dot(o.color, 10),
-            h('div', { style:{ fontSize:'13px', flex:'1' } }, o.key),
-            h('div', { style:{ fontSize:'13px', fontWeight:'700' } }, String(o.list.length)),
-            h('div', { style:{ fontSize:'12px', color:'var(--ink2)', width:'80px', textAlign:'right' } }, sar(sum(o.list)))); }))
-    )
-  );
-
+  /* funnel (compact column chart, paired with outcomes) + sell */
+  const funnelCard = buildFunnelCard(scope, s, d);
+  const outcomesCard = buildOutcomesCard(scope, s, d, sum);
 
   const sellScope = scoped({ ignoreSell:true });
   const sellValue = sum(sellScope) || 1;
